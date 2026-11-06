@@ -1,0 +1,20 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Generated data (rebuilt by ingestion)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/
+data/chroma/
+data/cache/
+data/neo4j/
+*.sqlite
+*.sqlite3
+
+# UI artefacts
+lib/
+graph_*.html

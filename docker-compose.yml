@@ -1,0 +1,16 @@
+services:
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: policylens-neo4j
+    ports:
+      - "7474:7474"   # browser UI
+      - "7687:7687"   # bolt
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-policylens-dev}
+      # Small heap: this project targets 8 GB laptops.
+      NEO4J_server_memory_heap_initial__size: 256m
+      NEO4J_server_memory_heap_max__size: 512m
+      NEO4J_server_memory_pagecache_size: 256m
+    volumes:
+      - ./data/neo4j:/data
+    restart: unless-stopped
