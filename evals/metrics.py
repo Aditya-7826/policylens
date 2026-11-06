@@ -14,7 +14,9 @@ Latency: p50 / p95 of end-to-end seconds.
 
 from __future__ import annotations
 
+import re
 import statistics
+import unicodedata
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -40,11 +42,20 @@ def mrr(evidence: list[dict], expected: list[str]) -> float | None:
     return 0.0
 
 
+_DASHES = re.compile(r"[‐-―−-]")
+
+
+def _fold(text: str) -> str:
+    """Lower-case, fold Unicode (NBSP, non-breaking hyphens), hyphens as spaces: 'supply‑chain' == 'supply chain'."""
+    text = _DASHES.sub(" ", unicodedata.normalize("NFKC", text).lower())
+    return " ".join(text.split())
+
+
 def key_fact_accuracy(answer: str, key_facts: list[list[str]]) -> float | None:
     if not key_facts:
         return None
-    a = answer.lower()
-    return sum(1 for alts in key_facts if any(x.lower() in a for x in alts)) / len(key_facts)
+    a = _fold(answer)
+    return sum(1 for alts in key_facts if any(_fold(x) in a for x in alts)) / len(key_facts)
 
 
 def abstention_correct(abstained: bool, answerable: bool) -> bool:

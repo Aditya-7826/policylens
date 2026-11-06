@@ -70,5 +70,28 @@ def write_report(out: Path) -> str:
     return md
 
 
+def rescore_key_facts(out: Path) -> int:
+    """Recompute the deterministic key-fact score from saved answers (no LLM calls), e.g. after a matcher fix."""
+    from evals.metrics import key_fact_accuracy
+    from evals.run import load_gold
+
+    gold = {g["id"]: g for g in load_gold()}
+    path = out / "results.jsonl"
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    changed = 0
+    for rec in records:
+        score, result = rec["score"], rec["result"]
+        if score.get("key_facts") is None or result.get("abstained"):
+            continue
+        new = key_fact_accuracy(result["answer"], gold[score["id"]]["key_facts"])
+        changed += new != score["key_facts"]
+        score["key_facts"] = new
+    path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records), encoding="utf-8")
+    return changed
+
+
 if __name__ == "__main__":
-    print(write_report(Path(sys.argv[1])))
+    run_dir = Path(sys.argv[1])
+    if "--rescore-facts" in sys.argv:
+        print(f"key facts rescored: {rescore_key_facts(run_dir)} changed")
+    print(write_report(run_dir))

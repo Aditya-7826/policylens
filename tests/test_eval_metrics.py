@@ -22,6 +22,9 @@ def test_retrieval_metrics():
 def test_key_facts_and_abstention():
     assert key_fact_accuracy("Notify within 72 Hours of the breach", [["72 hours"], ["Board"]]) == 0.5
     assert key_fact_accuracy("up to 250 crore", [["two hundred and fifty crore", "250 crore"]]) == 1.0
+    # LLM output uses non-breaking hyphens / NBSPs; they must still match plain gold strings
+    assert key_fact_accuracy("a supply‑chain risk program", [["supply chain"]]) == 1.0
+    assert key_fact_accuracy("EUR 10 000 000", [["10 000 000"]]) == 1.0
     assert abstention_correct(abstained=True, answerable=False)
     assert not abstention_correct(abstained=True, answerable=True)
 
