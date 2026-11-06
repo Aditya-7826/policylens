@@ -26,6 +26,7 @@ dependencies = [
     "streamlit>=1.40",
     "pyvis>=0.3.2",
     "httpx-sse>=0.4",
+    "pdfplumber>=0.11.10",
 ]
 
 [dependency-groups]
