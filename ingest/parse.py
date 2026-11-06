@@ -135,6 +135,34 @@ def _group_margin_notes(words: list[dict]) -> list[tuple[float, str]]:
     return [(top, text) for top, text, _ in notes]
 
 
+def _schedule_rows(band, words: list[dict]) -> list[str]:
+    """The penalty Schedule is a 2-column table; reading it line by line interleaves the columns
+    ("May extend to two take reasonable ... hundred and fifty"). Rebuild one line per row:
+    rows start at a serial number ("1.") on the left; the penalty column starts at the x of the
+    "Penalty" header."""
+    header = next((w for w in words if w["text"] == "Penalty"), None)
+    serials = [w for w in words if re.fullmatch(r"\d{1,2}\.", w["text"]) and w["x0"] < 160]
+    if header is None or not serials:
+        return ["Schedule: The Schedule", band.extract_text() or ""]
+    # Work with whole words (cropping by characters splits words that straddle the column edge).
+    # pdfplumber keeps absolute page coordinates on cropped pages.
+    x0, top, x1, _ = band.bbox
+    intro = band.crop((x0, top, x1, serials[0]["top"] - 1)).extract_text() or ""
+    lines = ["Schedule: The Schedule", intro.replace("THE SCHEDULE", "").strip()]
+    end = next((w["top"] for w in words if w["text"].startswith("——")), float("inf"))
+    tops = [w["top"] - 1 for w in serials] + [end]
+    for i, serial in enumerate(serials):
+        row = sorted((w for w in words if tops[i] <= w["top"] < tops[i + 1]), key=lambda w: (round(w["top"]), w["x0"]))
+        first = [w for w in row if abs(w["top"] - serial["top"]) < 3 and w is not serial]
+        # column boundary = middle of the widest gap between words on the row's first line
+        gaps = [(b["x0"] - a["x1"], (a["x1"] + b["x0"]) / 2) for a, b in zip(first, first[1:])]
+        split_x = max(gaps)[1] if gaps else header["x0"]
+        desc = " ".join(w["text"] for w in row if w["x0"] < split_x and w is not serial)
+        pen = " ".join(w["text"] for w in row if w["x0"] >= split_x)
+        lines.append(f"{serial['text']} {desc} Penalty: {pen}")
+    return lines
+
+
 def parse_gazette_pdf(path: Path) -> list[Page]:
     import pdfplumber
 
@@ -149,6 +177,10 @@ def parse_gazette_pdf(path: Path) -> list[Page]:
                     top = hits[0]["top"] - 2
             band = p.crop((0, top, p.width, GAZETTE_BOTTOM))
             words = band.extract_words()
+            if in_schedule or any(w["text"] == "SCHEDULE" for w in words):
+                in_schedule = True
+                pages.append(Page(p.page_number, clean_text("\n".join(_schedule_rows(band, words)))))
+                continue
             margin = [w for w in words if w["x0"] < MARGIN_LEFT or w["x0"] > MARGIN_RIGHT]
             boxes = [(w["x0"] - 0.5, w["x1"] + 0.5, w["top"] - 1, w["bottom"] + 1) for w in margin]
 
