@@ -78,3 +78,14 @@ def test_vector_baseline_skips_judge_and_bm25(tmp_path):
     assert not r.abstained and r.confidence is None
     assert r.retrieval[0]["counts"] == {"vector": 5} or set(r.retrieval[0]["counts"]) == {"vector"}
     assert ("Verdicts", "small") not in llm.calls and ("Analysis", "small") not in llm.calls
+
+
+def test_named_provision_is_pinned_and_sides_interleave(tmp_path):
+    llm = ScriptedLLM(answer="INSUFFICIENT_EVIDENCE", analysis={"query_type": "comparison", "sub_questions": [
+        {"question": "accounts for systems", "regulations": ["nist_sp_800-53r5"]},
+        {"question": "Article 33 breach", "regulations": ["gdpr"]},
+    ]})
+    g = build_graph(make_res(tmp_path, llm))
+    out = g.invoke({"question": "Compare AC-2 and Article 33", "config": CONFIGS["full"]})
+    assert out["evidence_ids"][:2] == ["nist_sp_800-53r5::ac-2::0", "gdpr::article-33::0"]
+    assert "exact" in out["retrieval"][1]["top"][0]["ranks"]

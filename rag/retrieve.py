@@ -12,6 +12,7 @@ much more accurate, so it only sees the fused top candidates.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 
 log = logging.getLogger(__name__)
@@ -68,11 +69,44 @@ def graph_retrieve(graph, question: str, k: int, doc_ids: list[str] | None, hops
                               for s in seeds]}
 
 
+_REF_PATTERNS = [
+    (re.compile(r"\b([A-Z]{2}-\d{1,2})\b"), "{0}"),                 # 800-53 control: CP-9
+    (re.compile(r"\b([A-Z]{2}\.[A-Z]{2})\b"), "{0}"),               # CSF category: GV.SC
+    (re.compile(r"\bArticles?\s+(\d{1,3})\b", re.I), "Article {0}"),
+    (re.compile(r"\b[Ss]ections?\s+(\d{1,3})\b"), "Section {0}"),
+    (re.compile(r"\bRecitals?\s+(\d{1,3})\b", re.I), "Recital {0}"),
+]
+
+
+def named_provisions(question: str) -> list[str]:
+    """Section labels the question names explicitly ("What does CP-9 require?" -> ["CP-9"])."""
+    out: list[str] = []
+    for pat, label in _REF_PATTERNS:
+        for m in pat.finditer(question):
+            lab = label.format(m.group(1))
+            if lab not in out:
+                out.append(lab)
+    return out
+
+
+def exact_retrieve(store, question: str, doc_ids: list[str] | None, per_section: int = 3) -> list[str]:
+    """Chunks of provisions named in the question. Keyword and vector search are weak at this:
+    "CP-9" appears in dozens of "Related Controls" lists, so BM25 ranks the control itself low."""
+    ids: list[str] = []
+    for label in named_provisions(question):
+        ids += store.chunks_for_section(label, doc_ids)[:per_section]
+    return ids[:6]
+
+
 def retrieve(res, question: str, doc_ids: list[str] | None, k: int, use_bm25: bool = True,
-             use_graph: bool = True) -> tuple[list[Candidate], dict]:
+             use_graph: bool = True, use_exact: bool = True) -> tuple[list[Candidate], dict]:
     """Run the enabled retrievers and fuse them. Returns (candidates, trace)."""
     lists: dict[str, list[str]] = {}
     trace: dict = {}
+
+    if use_exact and (exact := exact_retrieve(res.store, question, doc_ids)):
+        lists["exact"] = exact
+        trace["exact"] = exact
 
     vec = res.vectors.search(res.embedder.embed_query(question), k, doc_ids)
     lists["vector"] = [cid for cid, _ in vec]
@@ -104,6 +138,7 @@ def retrieve(res, question: str, doc_ids: list[str] | None, k: int, use_bm25: bo
 
 def rerank(res, question: str, cands: list[Candidate], max_candidates: int = 20) -> list[Candidate]:
     pool = cands[:max_candidates]
+    pool += [c for c in cands[max_candidates:] if "exact" in c.ranks]  # named provisions always get scored
     chunks = res.store.get([c.chunk_id for c in pool])
     pool = [c for c in pool if c.chunk_id in chunks]
     scores = res.reranker.score(question, [chunks[c.chunk_id].context_text for c in pool])

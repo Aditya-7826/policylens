@@ -50,10 +50,12 @@ def detect_regulations(text: str, available: set[str]) -> list[str]:
     return [d for d, hints in REG_HINTS.items() if d in available and any(h in t for h in hints)]
 
 
-def heuristic_analysis(question: str, available: set[str]) -> Analysis:
-    regs = detect_regulations(question, available)
+def heuristic_analysis(question: str, available: set[str] | dict[str, str]) -> Analysis:
+    titles = available if isinstance(available, dict) else {d: d for d in available}
+    regs = detect_regulations(question, set(titles))
     if COMPARE_WORDS.search(question) and len(regs) >= 2:
-        subs = [SubQuestion(question=f"{question} (only the part about {r})", regulations=[r]) for r in regs]
+        subs = [SubQuestion(question=f"{question} (only the part about {titles[r]})", regulations=[r])
+                for r in regs]
         return Analysis(query_type="comparison", sub_questions=subs, method="heuristic")
     return Analysis(query_type="simple", sub_questions=[SubQuestion(question=question, regulations=regs)],
                     method="heuristic")
@@ -80,4 +82,4 @@ def analyze(question: str, available_docs: dict[str, str], llm=None, decompose: 
                 return Analysis(query_type=a.query_type, sub_questions=subs, method="llm")
         except Exception:  # LLM unavailable or unusable output -> fall back
             pass
-    return heuristic_analysis(question, available)
+    return heuristic_analysis(question, available_docs)

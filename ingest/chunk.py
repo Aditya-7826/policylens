@@ -207,6 +207,9 @@ def window(paragraphs: list[str], max_tokens: int, overlap: int) -> list[str]:
     return windows
 
 
+DEFINITIONS_MAX_TOKENS = 250
+
+
 def _slug(label: str) -> str:
     return re.sub(r"[^a-z0-9.]+", "-", label.lower()).strip("-")
 
@@ -229,12 +232,15 @@ def chunk_document(doc: Document, max_tokens: int = 700, overlap: int = 80,
     chunks: list[Chunk] = []
     seen: dict[str, int] = {}
     for unit in split_units(doc, rules):
+        # Definition lists pack ~25 terms into one unit; big windows dilute each definition's
+        # embedding, so they get small windows (still split on clause boundaries).
+        unit_max = DEFINITIONS_MAX_TOKENS if re.match(r"definitions?\b", unit.title, re.I) else max_tokens
         slug = _slug(unit.section)
         # The same label can appear twice (e.g. a table of contents); keep IDs unique and stable.
         seen[slug] = seen.get(slug, 0) + 1
         if seen[slug] > 1:
             slug = f"{slug}-{seen[slug]}"
-        for i, text in enumerate(window(_paragraphs(unit.lines), max_tokens, overlap)):
+        for i, text in enumerate(window(_paragraphs(unit.lines), unit_max, min(overlap, unit_max // 4))):
             chunks.append(Chunk(
                 chunk_id=f"{doc.doc_id}::{slug}::{i}",
                 doc_id=doc.doc_id, doc_title=doc.title,

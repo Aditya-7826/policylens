@@ -96,3 +96,13 @@ def test_margin_notes_grouping_skips_act_citations():
 def test_html_blocks_become_lines():
     html = "<html><body><p class='ti-art'>Article 5</p><p>Principles</p><script>x()</script></body></html>"
     assert html_to_text(html) == "Article 5\nPrinciples"
+
+
+def test_definition_units_get_small_windows():
+    defs = "\n".join(f"({chr(97 + i)}) “term{i}” means " + "a defined thing in this Act " * 8 + ";" for i in range(20))
+    text = "Section 2: Definitions.\n2. In this Act,\n" + defs + "\nSection 3: Application of Act.\n3. " + "word " * 300
+    chunks = chunk_document(doc("act", text, kind="gazette"), max_tokens=700)
+    s2 = [c for c in chunks if c.section == "Section 2"]
+    s3 = [c for c in chunks if c.section == "Section 3"]
+    assert len(s2) > 3 and all(c.n_tokens <= 250 for c in s2)
+    assert len(s3) == 1  # normal sections keep the normal window

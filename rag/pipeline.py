@@ -33,15 +33,16 @@ class PipelineConfig(BaseModel):
     decompose: bool = True
     use_bm25: bool = True
     use_graph: bool = True
+    use_exact: bool = True  # look up provisions named in the question ("CP-9", "Article 33")
     use_rerank: bool = True
     use_verify: bool = True
     abstain: bool = True  # confidence-based abstention (the model can always say INSUFFICIENT_EVIDENCE)
 
 
 CONFIGS = {
-    "vector": PipelineConfig(name="vector", decompose=False, use_bm25=False, use_graph=False,
+    "vector": PipelineConfig(name="vector", decompose=False, use_bm25=False, use_graph=False, use_exact=False,
                              use_rerank=False, use_verify=False, abstain=False),
-    "hybrid": PipelineConfig(name="hybrid", decompose=False, use_bm25=True, use_graph=False,
+    "hybrid": PipelineConfig(name="hybrid", decompose=False, use_bm25=True, use_graph=False, use_exact=False,
                              use_rerank=False, use_verify=False, abstain=False),
     "full": PipelineConfig(name="full"),
 }
@@ -116,17 +117,17 @@ def build_graph(res: Resources | None = None):
         evidence_scores: list[list[float]] = []
         meta: dict[str, dict] = {}
         traces = []
+        picks: list[list] = []
         for sq in a.sub_questions:
             cands, trace = retrieve(res, sq.question, sq.regulations or None, s.retrieve_top_k,
-                                    use_bm25=cfg.use_bm25, use_graph=cfg.use_graph)
+                                    use_bm25=cfg.use_bm25, use_graph=cfg.use_graph, use_exact=cfg.use_exact)
             if cfg.use_rerank:
                 cands = rerank(res, sq.question, cands)
-            chosen = cands[:per_sub]
+            # A provision the user names explicitly ("CP-9", "Article 33") is always shown to the model.
+            named = [c for c in cands if "exact" in c.ranks][:per_sub]
+            chosen = (named + [c for c in cands if "exact" not in c.ranks])[:per_sub]
             evidence_scores.append([c.rerank for c in chosen if c.rerank is not None])
-            for c in chosen:
-                if c.chunk_id not in meta:
-                    evidence_ids.append(c.chunk_id)
-                    meta[c.chunk_id] = {"rerank": c.rerank, "sources": c.sources, "graph_path": c.graph_path}
+            picks.append(chosen)
             traces.append({
                 "question": sq.question, "regulations": sq.regulations,
                 "counts": trace.get("counts", {}), "graph": trace.get("graph"),
@@ -134,6 +135,14 @@ def build_graph(res: Resources | None = None):
                          "rerank": None if c.rerank is None else round(c.rerank, 3),
                          "graph_path": c.graph_path} for c in cands[:8]],
             })
+        # Interleave sub-questions (1st of each, then 2nd of each, ...) so a comparison shows the
+        # model both sides with equal prominence instead of all of side A before side B.
+        for rank in range(max((len(p) for p in picks), default=0)):
+            for p in picks:
+                if rank < len(p) and p[rank].chunk_id not in meta:
+                    c = p[rank]
+                    evidence_ids.append(c.chunk_id)
+                    meta[c.chunk_id] = {"rerank": c.rerank, "sources": c.sources, "graph_path": c.graph_path}
         return {"evidence_ids": evidence_ids[:10], "evidence_scores": evidence_scores, "candidates_meta": meta,
                 "retrieval": traces, "timings": _timed(state, "retrieve", t0)}
 

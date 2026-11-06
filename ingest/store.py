@@ -120,6 +120,16 @@ class ChunkStore:
             out.setdefault(doc, set()).add(sec)
         return out
 
+    def chunks_for_section(self, section: str, doc_ids: list[str] | None = None) -> list[str]:
+        """Chunk IDs of a named provision ("Article 33", "CP-9"), in document order."""
+        sql = "SELECT chunk_id FROM chunks WHERE json_extract(data, '$.section') = ?"
+        params: list = [section]
+        if doc_ids:
+            sql += f" AND doc_id IN ({','.join('?' * len(doc_ids))})"
+            params += list(doc_ids)
+        with self._lock:
+            return [r[0] for r in self._db.execute(sql + " ORDER BY rowid", params).fetchall()]
+
     def doc_titles(self) -> dict[str, str]:
         with self._lock:
             rows = self._db.execute("SELECT doc_id, MIN(json_extract(data, '$.doc_title')) FROM chunks "

@@ -68,3 +68,11 @@ class _Judge:
 
     def chat_json(self, messages, schema, **kw):
         return schema.model_validate({"verdicts": self.verdicts})
+
+
+def test_named_provisions():
+    from rag.retrieve import named_provisions
+
+    assert named_provisions("What does NIST SP 800-53 CP-9 require, and how is GV.SC related?") == ["CP-9", "GV.SC"]
+    assert named_provisions("Compare Article 33 GDPR with section 8 of the DPDP Act") == ["Article 33", "Section 8"]
+    assert named_provisions("What is a personal data breach?") == []
