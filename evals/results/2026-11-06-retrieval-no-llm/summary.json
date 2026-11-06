@@ -1,0 +1,92 @@
+{
+  "vector": {
+    "recall@5": 0.75,
+    "mrr": 0.744,
+    "key_facts": null,
+    "citation_precision": null,
+    "faithfulness": null,
+    "n": 44,
+    "abstain_unanswerable": 1.0,
+    "answer_rate_answerable": 0.0,
+    "abstention_accuracy": 0.205,
+    "latency_p50": 0.04,
+    "latency_p95": 0.05,
+    "by_type": {
+      "simple": {
+        "recall@5": 0.812,
+        "mrr": 0.637,
+        "key_facts": null
+      },
+      "multi_hop": {
+        "recall@5": 0.75,
+        "mrr": 0.85,
+        "key_facts": null
+      },
+      "comparison": {
+        "recall@5": 0.639,
+        "mrr": 0.815,
+        "key_facts": null
+      }
+    }
+  },
+  "hybrid": {
+    "recall@5": 0.807,
+    "mrr": 0.691,
+    "key_facts": null,
+    "citation_precision": null,
+    "faithfulness": null,
+    "n": 44,
+    "abstain_unanswerable": 1.0,
+    "answer_rate_answerable": 0.0,
+    "abstention_accuracy": 0.205,
+    "latency_p50": 0.05,
+    "latency_p95": 0.06,
+    "by_type": {
+      "simple": {
+        "recall@5": 0.812,
+        "mrr": 0.62,
+        "key_facts": null
+      },
+      "multi_hop": {
+        "recall@5": 0.95,
+        "mrr": 0.87,
+        "key_facts": null
+      },
+      "comparison": {
+        "recall@5": 0.639,
+        "mrr": 0.62,
+        "key_facts": null
+      }
+    }
+  },
+  "full": {
+    "recall@5": 0.814,
+    "mrr": 0.79,
+    "key_facts": null,
+    "citation_precision": null,
+    "faithfulness": null,
+    "n": 44,
+    "abstain_unanswerable": 1.0,
+    "answer_rate_answerable": 0.0,
+    "abstention_accuracy": 0.205,
+    "latency_p50": 2.3,
+    "latency_p95": 3.91,
+    "by_type": {
+      "simple": {
+        "recall@5": 0.938,
+        "mrr": 0.781,
+        "key_facts": null
+      },
+      "multi_hop": {
+        "recall@5": 0.85,
+        "mrr": 0.9,
+        "key_facts": null
+      },
+      "comparison": {
+        "recall@5": 0.556,
+        "mrr": 0.685,
+        "key_facts": null
+      }
+    }
+  }
+}
