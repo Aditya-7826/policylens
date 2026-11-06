@@ -31,8 +31,11 @@ class GraphStore:
         from neo4j import GraphDatabase
 
         s = get_settings()
+        # notifications off: Neo4j warns about relationship types that don't exist yet (e.g. before
+        # SIMILAR_TO links are built), which is expected and just noise in the logs.
         self.driver = GraphDatabase.driver(uri or s.neo4j_uri, auth=(user or s.neo4j_user,
-                                                                     password or s.neo4j_password))
+                                                                     password or s.neo4j_password),
+                                           notifications_min_severity="OFF")
 
     def close(self):
         self.driver.close()
@@ -184,12 +187,16 @@ class GraphStore:
 _LUCENE_SPECIAL = re.compile(r'([+\-!(){}\[\]^"~*?:\\/]|&&|\|\|)')
 _STOP = set("a an and are as at be by can do does for from has have how i in is it its of on or "
             "should that the their there these this to was what when where which who why will with "
-            "under after before about must company compare comparison between versus vs".split())
+            "under after before about must company compare comparison between versus vs "
+            # regulation names: every Section node's name contains them, so they match everything
+            "act dpdp gdpr india indias indian eu european regulation nist csf framework sp 800-53 rev "
+            "digital personal protection 2023 2016 general".split())
 
 
 def lucene_query(text: str) -> str:
     """Plain keywords OR-ed together, with Lucene special characters escaped."""
-    words = [w for w in re.findall(r"[A-Za-z0-9][A-Za-z0-9.\-]*", text) if w.lower() not in _STOP and len(w) > 2]
+    words = [w for w in re.findall(r"[A-Za-z0-9][A-Za-z0-9.\-]*", text)
+             if re.sub(r"'s$", "", w.lower()) not in _STOP and len(w) > 2]
     return " OR ".join(_LUCENE_SPECIAL.sub(r"\\\1", w) for w in words[:20])
 
 

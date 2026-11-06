@@ -16,14 +16,16 @@ class Settings(BaseSettings):
     groq_base_url: str = "https://api.groq.com/openai/v1"
     groq_large_model: str = "llama-3.3-70b-versatile"
     groq_small_model: str = "llama-3.1-8b-instant"
-    groq_daily_token_budget: int = 400_000
+    groq_large_daily_tokens: int = 90_000
+    groq_small_daily_tokens: int = 450_000
 
     # NVIDIA NIM (fallback, limited credits)
     nvidia_api_key: str = ""
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     nvidia_large_model: str = "meta/llama-3.3-70b-instruct"
     nvidia_small_model: str = "meta/llama-3.1-8b-instruct"
-    nvidia_daily_token_budget: int = 100_000
+    nvidia_large_daily_tokens: int = 50_000
+    nvidia_small_daily_tokens: int = 50_000
 
     # Local models
     embed_model: str = "BAAI/bge-small-en-v1.5"

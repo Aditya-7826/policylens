@@ -44,8 +44,10 @@ def make(tmp_path, groq_script, nvidia_script=None, groq_budget=10_000):
     groq = FakeClient(groq_script)
     nv = FakeClient(nvidia_script or [])
     providers = [
-        Provider("groq", "", "", {"large": "g-large", "small": "g-small"}, groq_budget, client=groq),
-        Provider("nvidia", "", "", {"large": "n-large", "small": "n-small"}, 10_000, client=nv),
+        Provider("groq", "", "", {"large": "g-large", "small": "g-small"},
+                 {"large": groq_budget, "small": groq_budget}, client=groq),
+        Provider("nvidia", "", "", {"large": "n-large", "small": "n-small"},
+                 {"large": 10_000, "small": 10_000}, client=nv),
     ]
     llm = LLM(providers, LLMStore(tmp_path / "llm.sqlite"), max_retries=2, sleep=lambda s: None)
     return llm, groq, nv
@@ -91,7 +93,8 @@ def test_budget_exhausted_skips_groq(tmp_path):
 def test_tokens_are_tracked(tmp_path):
     llm, _, _ = make(tmp_path, ["x"])
     llm.chat(MSG)
-    assert llm.store.used_today("groq") == 15
+    assert llm.store.used_today("groq:g-small") == 15
+    assert llm.store.used_today("groq:g-large") == 0
 
 
 def test_all_fail_gives_clear_error(tmp_path):
@@ -101,7 +104,7 @@ def test_all_fail_gives_clear_error(tmp_path):
 
 
 def test_no_provider_configured(tmp_path):
-    providers = [Provider("groq", "", "", {"large": "a", "small": "b"}, 100)]
+    providers = [Provider("groq", "", "", {"large": "a", "small": "b"}, {"large": 100, "small": 100})]
     llm = LLM(providers, LLMStore(tmp_path / "x.sqlite"))
     with pytest.raises(LLMUnavailable, match="GROQ_API_KEY"):
         llm.chat(MSG)

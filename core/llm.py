@@ -2,7 +2,7 @@
 
 Every call goes through `LLM.chat()`, which:
   1. looks the request up in the on-disk cache (key = hash of model + messages + params);
-  2. skips any provider whose daily token budget would be exceeded;
+  2. skips any provider/model whose daily token budget would be exceeded;
   3. calls Groq, retrying 429/5xx with exponential backoff (honouring Retry-After);
   4. falls back to NVIDIA NIM if Groq is unavailable;
   5. raises LLMUnavailable with a readable message if every provider fails.
@@ -55,7 +55,7 @@ class Provider:
     api_key: str
     base_url: str
     models: dict[str, str]  # size -> model id
-    daily_budget: int
+    budgets: dict[str, int]  # size -> daily token budget (free-tier caps are per model)
     client: object | None = field(default=None, repr=False)  # injectable for tests
 
     @property
@@ -73,9 +73,11 @@ class Provider:
 def providers_from_settings(s: Settings) -> list[Provider]:
     return [
         Provider("groq", s.groq_api_key, s.groq_base_url,
-                 {"large": s.groq_large_model, "small": s.groq_small_model}, s.groq_daily_token_budget),
+                 {"large": s.groq_large_model, "small": s.groq_small_model},
+                 {"large": s.groq_large_daily_tokens, "small": s.groq_small_daily_tokens}),
         Provider("nvidia", s.nvidia_api_key, s.nvidia_base_url,
-                 {"large": s.nvidia_large_model, "small": s.nvidia_small_model}, s.nvidia_daily_token_budget),
+                 {"large": s.nvidia_large_model, "small": s.nvidia_small_model},
+                 {"large": s.nvidia_large_daily_tokens, "small": s.nvidia_small_daily_tokens}),
     ]
 
 
@@ -125,9 +127,10 @@ class LLM:
             if not provider.configured:
                 continue
             est = _estimate_tokens(messages, max_tokens)
-            used = self.store.used_today(provider.name)
-            if used + est > provider.daily_budget:
-                errors.append(f"{provider.name}: daily token budget reached ({used}/{provider.daily_budget})")
+            ledger = f"{provider.name}:{provider.models[size]}"
+            used, budget = self.store.used_today(ledger), provider.budgets[size]
+            if used + est > budget:
+                errors.append(f"{ledger}: daily token budget reached ({used}/{budget})")
                 continue
             try:
                 result = self._call_with_backoff(provider, size, messages, temperature, max_tokens)
@@ -135,7 +138,7 @@ class LLM:
                 errors.append(f"{provider.name}: {exc}")
                 log.warning("LLM provider %s failed: %s", provider.name, exc)
                 continue
-            self.store.add_usage(provider.name, result.prompt_tokens + result.completion_tokens)
+            self.store.add_usage(ledger, result.prompt_tokens + result.completion_tokens)
             self.store.put(key, result.provider, result.model, result.text,
                            result.prompt_tokens, result.completion_tokens)
             return result
@@ -159,7 +162,7 @@ class LLM:
 
     def usage(self) -> dict:
         report = self.store.usage_report()
-        report["budgets"] = {p.name: p.daily_budget for p in self.providers}
+        report["budgets"] = {f"{p.name}:{p.models[s]}": p.budgets[s] for p in self.providers for s in p.budgets}
         report["configured"] = [p.name for p in self.providers if p.configured]
         return report
 
