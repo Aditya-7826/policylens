@@ -110,11 +110,11 @@ def _store(tmp_path, n=4):
 
 def test_build_graph_is_resumable_when_llm_runs_out(tmp_path):
     store, g = _store(tmp_path), FakeGraph()
-    r1 = build_graph(store, graph=g, llm=FakeLLM(fail_after=2), progress=lambda *_: None)
+    r1 = build_graph(store, graph=g, llm=FakeLLM(fail_after=2), progress=lambda *_: None, cooldown=0)
     assert r1["done"] == 2 and r1["skipped"] == 1 and r1["structure_only"] == 2
     assert len(g.written) == 5  # every chunk at least has its structure in the graph
     # second run: only the 2 structure-only chunks are left, and they get extracted
-    r2 = build_graph(store, graph=g, llm=FakeLLM(), progress=lambda *_: None)
+    r2 = build_graph(store, graph=g, llm=FakeLLM(), progress=lambda *_: None, cooldown=0)
     assert r2["done"] == 2 and r2["skipped"] == 0
     assert store.pending_kg() == []
 
@@ -122,5 +122,15 @@ def test_build_graph_is_resumable_when_llm_runs_out(tmp_path):
 def test_build_graph_respects_limit(tmp_path):
     store, g = _store(tmp_path), FakeGraph()
     llm = FakeLLM()
-    r = build_graph(store, graph=g, llm=llm, limit=1, progress=lambda *_: None)
+    r = build_graph(store, graph=g, llm=llm, limit=1, progress=lambda *_: None, cooldown=0)
     assert llm.calls == 1 and r["done"] == 1 and r["structure_only"] == 3
+
+
+def test_structure_is_not_rewritten_when_llm_is_down(tmp_path):
+    store, g = _store(tmp_path), FakeGraph()
+    build_graph(store, graph=g, llm=FakeLLM(fail_after=0), progress=lambda *_: None, cooldown=0)
+    first = len(g.written)
+    assert first == 5  # every chunk gets its structure once
+    r = build_graph(store, graph=g, llm=FakeLLM(fail_after=0), progress=lambda *_: None, cooldown=0)
+    assert len(g.written) == first and r["structure_only"] == 4  # nothing rewritten the second time
+    assert len(store.pending_kg()) == 4  # still queued for LLM extraction

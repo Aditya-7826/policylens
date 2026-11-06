@@ -143,3 +143,18 @@ def test_reasoning_effort_only_for_reasoning_models(tmp_path):
     llm.chat(MSG, size="small")
     assert groq.calls[0]["extra_body"] == {"reasoning_effort": "low"}
     assert "extra_body" not in groq.calls[1]
+
+
+def test_minute_window_paces_calls():
+    from core.llm import MinuteWindow
+
+    now = [0.0]
+    w = MinuteWindow(limit=1000, clock=lambda: now[0])
+    assert w.wait_time(600) == 0
+    w.record(600)
+    assert w.wait_time(300) == 0           # 900 fits
+    w.record(300)
+    wait = w.wait_time(300)                # 1200 would not fit: wait for the first call to age out
+    assert 59.9 < wait < 60.2
+    now[0] = 61.0
+    assert w.wait_time(300) == 0

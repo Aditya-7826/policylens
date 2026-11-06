@@ -142,7 +142,8 @@ class ChunkStore:
                                  [(c.content_hash, c.chunk_id) for c in chunks])
             self._db.commit()
 
-    _PENDING_KG = "(kg_hash IS NULL OR kg_hash != content_hash OR kg_status='error')"
+    # 'structure' = deterministic graph written, LLM extraction still to do
+    _PENDING_KG = "(kg_hash IS NULL OR kg_hash != content_hash OR kg_status IN ('error', 'structure'))"
 
     def _kg_filter(self, doc_ids):
         if not doc_ids:
@@ -172,6 +173,13 @@ class ChunkStore:
         with self._lock:
             return self._db.execute(f"SELECT COUNT(*) FROM chunks WHERE {self._PENDING_KG}{extra}",
                                     params).fetchone()[0]
+
+    def needs_structure(self, chunk: Chunk) -> bool:
+        """True if this chunk's deterministic graph has never been written for its current content."""
+        with self._lock:
+            row = self._db.execute("SELECT kg_hash, kg_status FROM chunks WHERE chunk_id=?",
+                                   (chunk.chunk_id,)).fetchone()
+        return row is None or row[0] != chunk.content_hash or row[1] not in ("structure", "done", "skipped")
 
     def mark_kg(self, chunk: Chunk, status: str):
         with self._lock:

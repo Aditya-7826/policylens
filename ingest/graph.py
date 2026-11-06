@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 
 from core.config import get_settings
 from ingest.chunk import Chunk
@@ -60,7 +61,11 @@ class GraphStore:
     # ------------------------------------------------------------------ writes
     def forget_chunk(self, chunk_id: str):
         """Remove everything a chunk contributed (before re-extracting it, or when it is deleted)."""
-        self.run("""MATCH ()-[r]->() WHERE $cid IN r.chunks
+        # Every edge a chunk produced starts or ends at a node MENTIONED_IN that chunk, so we only
+        # look there (index lookup) instead of scanning every relationship in the database.
+        self.run("""MATCH (:Chunk {id: $cid})<-[:MENTIONED_IN]-(n:Node)-[r]-(:Node)
+                    WHERE type(r) <> 'MENTIONED_IN' AND $cid IN r.chunks
+                    WITH DISTINCT r
                     SET r.chunks = [x IN r.chunks WHERE x <> $cid]
                     WITH r WHERE size(r.chunks) = 0 DELETE r""", cid=chunk_id)
         self.run("MATCH (c:Chunk {id: $cid}) DETACH DELETE c", cid=chunk_id)
@@ -201,9 +206,25 @@ def lucene_query(text: str) -> str:
 
 
 # ---------------------------------------------------------------------- ingestion step
+def _extract(llm, chunk: Chunk, progress, cooldown: float) -> Extraction:
+    """One extraction call. A transient rate-limit failure gets one cool-down and a retry;
+    a daily limit (or no key) is final and propagates so the run switches to structure-only."""
+    from core.llm import LLMUnavailable
+
+    try:
+        return llm.chat_json(extraction_messages(chunk), Extraction, size="small", max_tokens=900)
+    except LLMUnavailable as exc:
+        msg = str(exc).lower()
+        if "daily" in msg or "configured" in msg or cooldown <= 0:
+            raise
+        progress(f"[graph] rate limited; cooling down {cooldown:.0f}s, then retrying once")
+        time.sleep(cooldown)
+        return llm.chat_json(extraction_messages(chunk), Extraction, size="small", max_tokens=900)
+
+
 def build_graph(store: ChunkStore, doc_ids: list[str] | None = None, limit: int | None = None,
                 removed_ids: list[str] | None = None, progress=print, graph: GraphStore | None = None,
-                llm=None) -> dict:
+                llm=None, cooldown: float = 65.0) -> dict:
     """Extract the graph for every chunk not yet processed. Stops cleanly when the LLM
     budget runs out; the next run continues where this one stopped."""
     from core.llm import LLMUnavailable, get_llm
@@ -230,13 +251,19 @@ def build_graph(store: ChunkStore, doc_ids: list[str] | None = None, limit: int 
         if ok and llm_ok and limit is not None and llm_calls >= limit:
             llm_ok = False
             progress(f"[graph] --kg-limit {limit} reached; remaining chunks get structure only for now")
+        if ok and not llm_ok and not store.needs_structure(chunk):
+            counts["structure_only"] += 1  # already has its structure from an earlier run; nothing to redo
+            continue
         if ok and llm_ok:
             try:
-                extraction = llm.chat_json(extraction_messages(chunk), Extraction, size="small", max_tokens=900)
+                extraction = _extract(llm, chunk, progress, cooldown)
                 llm_calls += 1
             except LLMUnavailable as exc:
                 llm_ok = False
                 progress(f"[graph] LLM unavailable ({exc}); remaining chunks get structure only for now")
+                if not store.needs_structure(chunk):
+                    counts["structure_only"] += 1
+                    continue
             except Exception as exc:  # invalid JSON twice etc. - record and move on
                 log.warning("extraction failed for %s: %s", chunk.chunk_id, exc)
                 store.mark_kg(chunk, "error")
@@ -245,7 +272,8 @@ def build_graph(store: ChunkStore, doc_ids: list[str] | None = None, limit: int 
         graph.forget_chunk(chunk.chunk_id)
         graph.write(build_chunk_graph(chunk, extraction, sections_by_doc.get(chunk.doc_id, set())))
         if ok and extraction is None:
-            counts["structure_only"] += 1  # stays pending: the next run extracts it
+            store.mark_kg(chunk, "structure")  # still pending for the LLM, but structure is written
+            counts["structure_only"] += 1
         else:
             status = "done" if ok else "skipped"
             store.mark_kg(chunk, status)

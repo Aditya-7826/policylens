@@ -16,7 +16,9 @@ import json
 import logging
 import random
 import re
+import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Literal, TypeVar
 
@@ -59,6 +61,7 @@ class Provider:
     models: dict[str, str]  # size -> model id
     budgets: dict[str, int]  # size -> daily token budget (free-tier caps are per model)
     daily_requests: int = 10**9  # per-model request cap per day (Groq free tier: 1000)
+    tokens_per_minute: int = 0  # per-model pacing limit (Groq free tier: 8000); 0 = no pacing
     reasoning_effort: str = ""  # sent only to reasoning models (gpt-oss); keeps hidden tokens low
     client: object | None = field(default=None, repr=False)  # injectable for tests
 
@@ -79,7 +82,8 @@ def providers_from_settings(s: Settings) -> list[Provider]:
         Provider("groq", s.groq_api_key, s.groq_base_url,
                  {"large": s.groq_large_model, "small": s.groq_small_model},
                  {"large": s.groq_large_daily_tokens, "small": s.groq_small_daily_tokens},
-                 daily_requests=s.groq_daily_requests, reasoning_effort=s.llm_reasoning_effort),
+                 daily_requests=s.groq_daily_requests, reasoning_effort=s.llm_reasoning_effort,
+                 tokens_per_minute=s.groq_tokens_per_minute),
         Provider("nvidia", s.nvidia_api_key, s.nvidia_base_url,
                  {"large": s.nvidia_large_model, "small": s.nvidia_small_model},
                  {"large": s.nvidia_large_daily_tokens, "small": s.nvidia_small_daily_tokens},
@@ -102,9 +106,45 @@ def _retry_after(exc: Exception) -> float | None:
         return None
 
 
+class MinuteWindow:
+    """Client-side pacing for a tokens-per-minute limit (sliding 60 s window).
+
+    Groq's free tier allows ~8k tokens/minute per model. Sending calls back to back and
+    retrying on 429 wastes requests and can exhaust retries; instead we wait *before*
+    sending until the call fits in the window."""
+
+    def __init__(self, limit: int, clock=time.monotonic):
+        self.limit = limit
+        self.clock = clock
+        self.events: deque[tuple[float, int]] = deque()
+        self.lock = threading.Lock()
+
+    def _used(self, now: float) -> int:
+        while self.events and now - self.events[0][0] >= 60:
+            self.events.popleft()
+        return sum(t for _, t in self.events)
+
+    def wait_time(self, tokens: int) -> float:
+        """Seconds to wait before `tokens` more fit (0 if they fit now)."""
+        with self.lock:
+            now = self.clock()
+            if not self.events or self._used(now) + tokens <= self.limit:
+                return 0.0
+            running = self._used(now)
+            for ts, t in self.events:  # wait until enough old events leave the window
+                running -= t
+                if running + tokens <= self.limit:
+                    return max(0.0, ts + 60 - now) + 0.05
+            return max(0.0, self.events[-1][0] + 60 - now) + 0.05
+
+    def record(self, tokens: int):
+        with self.lock:
+            self.events.append((self.clock(), tokens))
+
+
 class LLM:
     def __init__(self, providers: list[Provider] | None = None, store: LLMStore | None = None,
-                 max_retries: int = 4, base_delay: float = 1.0, sleep=time.sleep):
+                 max_retries: int = 6, base_delay: float = 2.0, sleep=time.sleep):
         s = get_settings()
         self.providers = providers if providers is not None else providers_from_settings(s)
         self.store = store or LLMStore(s.cache_dir / "llm.sqlite")
@@ -112,6 +152,14 @@ class LLM:
         self.base_delay = base_delay
         self._sleep = sleep
         self.max_wait = s.llm_max_wait_seconds or MAX_WAIT_SECONDS
+        self._windows: dict[str, MinuteWindow] = {}
+
+    def _window(self, provider: Provider, ledger: str) -> MinuteWindow | None:
+        if not provider.tokens_per_minute:
+            return None
+        if ledger not in self._windows:
+            self._windows[ledger] = MinuteWindow(provider.tokens_per_minute)
+        return self._windows[ledger]
 
     # ------------------------------------------------------------------ public
     def chat(self, messages: list[dict], size: Size = "small", temperature: float = 0.0,
@@ -142,12 +190,20 @@ class LLM:
             if self.store.calls_today(ledger) >= provider.daily_requests:
                 errors.append(f"{ledger}: daily request limit reached ({provider.daily_requests})")
                 continue
+            window = self._window(provider, ledger)
+            if window is not None:
+                # expected size: prompt + a typical (not maximum) completion
+                if (pause := window.wait_time(_estimate_tokens(messages, min(max_tokens, 600)))) > 0:
+                    log.info("pacing %s: waiting %.1fs for the per-minute token window", ledger, pause)
+                    self._sleep(pause)
             try:
                 result = self._call_with_backoff(provider, size, messages, temperature, max_tokens)
             except _ProviderFailed as exc:
                 errors.append(f"{provider.name}: {exc}")
                 log.warning("LLM provider %s failed: %s", provider.name, exc)
                 continue
+            if window is not None:
+                window.record(result.prompt_tokens + result.completion_tokens)
             self.store.add_usage(ledger, result.prompt_tokens + result.completion_tokens)
             self.store.put(key, result.provider, result.model, result.text,
                            result.prompt_tokens, result.completion_tokens)
