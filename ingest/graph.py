@@ -217,17 +217,14 @@ def build_graph(store: ChunkStore, doc_ids: list[str] | None = None, limit: int 
     for cid in removed_ids or []:
         graph.forget_chunk(cid)
 
-    all_chunks = store.all()
-    sections_by_doc: dict[str, set[str]] = {}
-    for c in all_chunks:
-        sections_by_doc.setdefault(c.doc_id, set()).add(c.section)
-
-    pending = store.pending_kg(doc_ids)
+    sections_by_doc = store.sections_by_doc()  # labels only, read from SQLite
+    total = store.count_pending_kg(doc_ids)
     counts = {"done": 0, "skipped": 0, "error": 0, "structure_only": 0}
     llm_calls = 0
     llm_ok = True  # flips to False when the budget/limit is hit; the rest gets structure only
-    progress(f"[graph] {len(pending)} chunks pending extraction")
-    for i, chunk in enumerate(pending):
+    progress(f"[graph] {total} chunks pending extraction")
+    pages = store.iter_pending_kg(doc_ids, batch=get_settings().ingest_batch_size)
+    for i, chunk in enumerate(c for page in pages for c in page):  # one page of chunks in memory
         ok, _reason = worth_extracting(chunk)
         extraction = None
         if ok and llm_ok and limit is not None and llm_calls >= limit:
@@ -254,7 +251,7 @@ def build_graph(store: ChunkStore, doc_ids: list[str] | None = None, limit: int 
             store.mark_kg(chunk, status)
             counts[status] += 1
         if (i + 1) % 25 == 0:
-            progress(f"[graph] {i + 1}/{len(pending)} (done {counts['done']}, skipped {counts['skipped']}, "
+            progress(f"[graph] {i + 1}/{total} (done {counts['done']}, skipped {counts['skipped']}, "
                      f"structure only {counts['structure_only']})")
 
     if counts["done"] or removed_ids:

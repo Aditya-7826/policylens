@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from collections.abc import Iterator
 from pathlib import Path
 
 from ingest.chunk import Chunk
@@ -87,11 +88,43 @@ class ChunkStore:
         out = [Chunk.model_validate_json(r[0]) for r in rows]
         return {c.chunk_id: c for c in out}
 
-    def pending_embedding(self) -> list[Chunk]:
+    def iter_all(self, batch: int = 256) -> Iterator[list[Chunk]]:
+        """All chunks, one page at a time (keyset pagination on rowid), so callers never hold the corpus."""
+        last = 0
+        while True:
+            with self._lock:
+                rows = self._db.execute("SELECT rowid, data FROM chunks WHERE rowid > ? ORDER BY rowid LIMIT ?",
+                                        (last, batch)).fetchall()
+            if not rows:
+                return
+            last = rows[-1][0]
+            yield [Chunk.model_validate_json(r[1]) for r in rows]
+
+    def pending_embedding(self, limit: int | None = None) -> list[Chunk]:
+        sql = "SELECT data FROM chunks WHERE embedded_hash IS NULL OR embedded_hash != content_hash ORDER BY rowid"
         with self._lock:
-            rows = self._db.execute(
-                "SELECT data FROM chunks WHERE embedded_hash IS NULL OR embedded_hash != content_hash").fetchall()
+            rows = self._db.execute(sql + (f" LIMIT {int(limit)}" if limit else "")).fetchall()
         return [Chunk.model_validate_json(r[0]) for r in rows]
+
+    def count_pending_embedding(self) -> int:
+        with self._lock:
+            return self._db.execute("SELECT COUNT(*) FROM chunks WHERE embedded_hash IS NULL "
+                                    "OR embedded_hash != content_hash").fetchone()[0]
+
+    def sections_by_doc(self) -> dict[str, set[str]]:
+        """Section labels per document, read straight from SQLite (no Chunk objects)."""
+        with self._lock:
+            rows = self._db.execute("SELECT DISTINCT doc_id, json_extract(data, '$.section') FROM chunks").fetchall()
+        out: dict[str, set[str]] = {}
+        for doc, sec in rows:
+            out.setdefault(doc, set()).add(sec)
+        return out
+
+    def doc_titles(self) -> dict[str, str]:
+        with self._lock:
+            rows = self._db.execute("SELECT doc_id, MIN(json_extract(data, '$.doc_title')) FROM chunks "
+                                    "GROUP BY doc_id").fetchall()
+        return dict(rows)
 
     def mark_embedded(self, chunks: list[Chunk]):
         with self._lock:
@@ -99,15 +132,36 @@ class ChunkStore:
                                  [(c.content_hash, c.chunk_id) for c in chunks])
             self._db.commit()
 
+    _PENDING_KG = "(kg_hash IS NULL OR kg_hash != content_hash OR kg_status='error')"
+
+    def _kg_filter(self, doc_ids):
+        if not doc_ids:
+            return "", []
+        return f" AND doc_id IN ({','.join('?' * len(doc_ids))})", list(doc_ids)
+
     def pending_kg(self, doc_ids: list[str] | None = None) -> list[Chunk]:
-        sql = "SELECT data FROM chunks WHERE (kg_hash IS NULL OR kg_hash != content_hash OR kg_status='error')"
-        params: list = []
-        if doc_ids:
-            sql += f" AND doc_id IN ({','.join('?' * len(doc_ids))})"
-            params = list(doc_ids)
+        return [c for page in self.iter_pending_kg(doc_ids) for c in page]
+
+    def iter_pending_kg(self, doc_ids: list[str] | None = None, batch: int = 64) -> Iterator[list[Chunk]]:
+        """Pending chunks page by page. Keyset pagination (rowid > last) means chunks that stay
+        pending during the run (structure-only) are not fetched again in an endless loop."""
+        extra, params = self._kg_filter(doc_ids)
+        last = 0
+        while True:
+            with self._lock:
+                rows = self._db.execute(
+                    f"SELECT rowid, data FROM chunks WHERE {self._PENDING_KG}{extra} AND rowid > ? "
+                    "ORDER BY rowid LIMIT ?", params + [last, batch]).fetchall()
+            if not rows:
+                return
+            last = rows[-1][0]
+            yield [Chunk.model_validate_json(r[1]) for r in rows]
+
+    def count_pending_kg(self, doc_ids: list[str] | None = None) -> int:
+        extra, params = self._kg_filter(doc_ids)
         with self._lock:
-            rows = self._db.execute(sql + " ORDER BY doc_id, rowid", params).fetchall()
-        return [Chunk.model_validate_json(r[0]) for r in rows]
+            return self._db.execute(f"SELECT COUNT(*) FROM chunks WHERE {self._PENDING_KG}{extra}",
+                                    params).fetchone()[0]
 
     def mark_kg(self, chunk: Chunk, status: str):
         with self._lock:

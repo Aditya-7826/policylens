@@ -65,10 +65,19 @@ def tokenize(text: str) -> list[str]:
 
 
 class BM25Index:
-    def __init__(self, chunks: list[Chunk]):
-        self.ids = [c.chunk_id for c in chunks]
-        self.doc_of = {c.chunk_id: c.doc_id for c in chunks}
-        self.bm25 = BM25Okapi([tokenize(c.context_text) for c in chunks]) if chunks else None
+    """Keeps only token lists and ids, not chunk text. Accepts a list of chunks or an iterator
+    of pages (ChunkStore.iter_all), so building it never loads the whole corpus at once."""
+
+    def __init__(self, chunks):
+        self.ids: list[str] = []
+        self.doc_of: dict[str, str] = {}
+        corpus: list[list[str]] = []
+        for item in chunks:
+            for c in item if isinstance(item, list) else [item]:
+                self.ids.append(c.chunk_id)
+                self.doc_of[c.chunk_id] = c.doc_id
+                corpus.append(tokenize(c.context_text))
+        self.bm25 = BM25Okapi(corpus) if corpus else None
 
     def search(self, query: str, k: int, doc_ids: list[str] | None = None) -> list[tuple[str, float]]:
         if self.bm25 is None:

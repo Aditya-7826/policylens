@@ -58,3 +58,39 @@ def test_bm25_ranks_and_filters():
     idx = BM25Index(chunks)
     assert idx.search("data breach notification", 2)[0][0] == "x"
     assert [c for c, _ in idx.search("breach", 5, doc_ids=["dpdp"])] == ["z"]
+
+
+def test_paged_iterators_and_batched_embedding(tmp_path):
+    from ingest.pipeline import embed_pending
+
+    store = ChunkStore(tmp_path / "c.sqlite")
+    store.sync_document("d", [mk(f"c{i}", f"text number {i}") for i in range(10)])
+    assert [len(p) for p in store.iter_all(batch=4)] == [4, 4, 2]
+    assert store.doc_titles() == {"d": "D"} and store.sections_by_doc() == {"d": {"S"}}
+
+    # pending kg pages: chunks left pending mid-run are not re-fetched (no endless loop)
+    seen = [c.chunk_id for page in store.iter_pending_kg(batch=3) for c in page]
+    assert len(seen) == 10 == len(set(seen))
+
+    class FakeVindex:
+        def __init__(self): self.batches = []
+        def upsert(self, chunks, vecs): self.batches.append(len(chunks))
+
+    import core.models as models
+
+    class E:
+        def embed_documents(self, texts): return [[0.0] for _ in texts]
+    orig = models.get_embedder
+    models.get_embedder = lambda: E()
+    try:
+        v = FakeVindex()
+        assert embed_pending(store, v, batch_size=4, progress=lambda *_: None) == 10
+        assert v.batches == [4, 4, 2] and store.count_pending_embedding() == 0
+    finally:
+        models.get_embedder = orig
+
+
+def test_bm25_accepts_pages():
+    # 3+ docs: with 2, BM25's IDF for a term in 1 of them is log(1.5/1.5) = 0
+    pages = iter([[mk("x", "breach notification"), mk("z", "penalty schedule")], [mk("y", "account management")]])
+    assert BM25Index(pages).search("account", 1)[0][0] == "y"

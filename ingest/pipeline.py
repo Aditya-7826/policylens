@@ -47,6 +47,32 @@ def chunker_version() -> str:
     return h.hexdigest()[:12]
 
 
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):  # 1 MB at a time
+            h.update(block)
+    return h.hexdigest()
+
+
+def embed_pending(store: ChunkStore, vindex, batch_size: int, progress=print) -> int:
+    """Embed chunks whose content changed, `batch_size` at a time. Each batch is written to
+    Chroma and marked done before the next is loaded, so an interrupted run resumes cleanly."""
+    total = store.count_pending_embedding()
+    if not total:
+        return 0
+    from core.models import get_embedder
+
+    embedder = get_embedder()
+    done = 0
+    while batch := store.pending_embedding(limit=batch_size):
+        vindex.upsert(batch, embedder.embed_documents([c.context_text for c in batch]))
+        store.mark_embedded(batch)
+        done += len(batch)
+        progress(f"[embed] {done}/{total} chunks")
+    return done
+
+
 def get_chunk_store() -> ChunkStore:
     return ChunkStore(get_settings().processed_dir / "chunks.sqlite")
 
@@ -60,39 +86,38 @@ def run_ingest(files: list[Path] | None = None, graph: bool = True, kg_docs: lis
     report = IngestReport(files=[f.name for f in files])
     removed_ids: list[str] = []
 
-    # 1-3. parse, chunk, sync
+    from ingest.index import VectorIndex
+
+    vindex = VectorIndex(s.chroma_dir)
+
+    # Documents are processed one at a time: parse -> chunk -> sync -> embed in batches.
+    # Only one document's chunks (plus one embedding batch) are in memory at any moment.
     version = chunker_version()
     for f in files:
-        sha = hashlib.sha256(f.read_bytes()).hexdigest()
+        sha = _sha256_file(f)
         if store.file_unchanged(doc_id_for(f), sha, version):
             progress(f"[parse] {f.name}: unchanged, skipped")
             continue
         doc = parse_file(f)
+        doc_id = doc.doc_id
         chunks = chunk_document(doc, s.chunk_max_tokens, s.chunk_overlap_tokens)
-        diff = store.sync_document(doc.doc_id, chunks)
-        store.record_file(doc.doc_id, f.name, sha, version)
+        del doc  # page text is no longer needed
+        diff = store.sync_document(doc_id, chunks)
+        n_chunks = len(chunks)
+        del chunks
         report.added += len(diff["added"])
         report.changed += len(diff["changed"])
         report.removed += len(diff["removed"])
         removed_ids += diff["removed"]
-        progress(f"[parse] {f.name}: {len(chunks)} chunks "
+        vindex.delete(diff["removed"])
+        progress(f"[parse] {f.name}: {n_chunks} chunks "
                  f"(+{len(diff['added'])} new, ~{len(diff['changed'])} changed, -{len(diff['removed'])} removed)")
+        report.embedded += embed_pending(store, vindex, s.ingest_batch_size, progress)
+        store.record_file(doc_id_for(f), f.name, sha, version)  # only after its embeddings are stored
 
-    # 4. embeddings for new/changed chunks only
-    from ingest.index import VectorIndex
-
-    vindex = VectorIndex(s.chroma_dir)
-    vindex.delete(removed_ids)
-    pending = store.pending_embedding()
-    if pending:
-        from core.models import get_embedder
-
-        progress(f"[embed] {len(pending)} chunks with {s.embed_model} (local CPU)")
-        vecs = get_embedder().embed_documents([c.context_text for c in pending])
-        vindex.upsert(pending, vecs)
-        store.mark_embedded(pending)
-        report.embedded = len(pending)
-    else:
+    # Anything left over from an interrupted earlier run
+    report.embedded += embed_pending(store, vindex, s.ingest_batch_size, progress)
+    if not report.embedded:
         progress("[embed] nothing to do")
 
     # 5. knowledge graph

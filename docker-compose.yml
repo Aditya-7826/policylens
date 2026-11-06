@@ -11,6 +11,7 @@ services:
       NEO4J_server_memory_heap_initial__size: 256m
       NEO4J_server_memory_heap_max__size: 512m
       NEO4J_server_memory_pagecache_size: 256m
+    mem_limit: 1g   # hard cap for the whole container (heap + page cache + JVM overhead)
     volumes:
       - ./data/neo4j:/data
     restart: unless-stopped

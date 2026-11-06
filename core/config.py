@@ -29,7 +29,8 @@ class Settings(BaseSettings):
 
     # Local models
     embed_model: str = "BAAI/bge-small-en-v1.5"
-    rerank_model: str = "BAAI/bge-reranker-base"
+    # MiniLM: +0.5 GB RAM, ~0.7 s per query. bge-reranker-base: +1.6 GB, ~4.5 s (measured on CPU).
+    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
     # Neo4j
     neo4j_uri: str = "bolt://localhost:7687"
@@ -45,6 +46,7 @@ class Settings(BaseSettings):
     chunk_max_tokens: int = 700
     chunk_min_tokens: int = 120
     chunk_overlap_tokens: int = 80
+    ingest_batch_size: int = 64  # chunks per embedding / graph batch (bounded memory)
 
     api_url: str = "http://localhost:8000"
 

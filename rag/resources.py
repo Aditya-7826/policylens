@@ -34,7 +34,7 @@ class Resources:
     def bm25(self):
         from ingest.index import BM25Index
 
-        return BM25Index(self.store.all())
+        return BM25Index(self.store.iter_all())  # streamed page by page
 
     @cached_property
     def embedder(self):
@@ -72,10 +72,7 @@ class Resources:
 
     @cached_property
     def doc_titles(self) -> dict[str, str]:
-        out: dict[str, str] = {}
-        for c in self.store.all():
-            out.setdefault(c.doc_id, c.doc_title)
-        return out
+        return self.store.doc_titles()
 
     def refresh(self):
         """Drop cached indexes after ingestion so new chunks become searchable."""

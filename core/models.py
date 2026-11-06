@@ -1,6 +1,7 @@
 """Local CPU models: embedder (bi-encoder) and reranker (cross-encoder).
 
-Loaded lazily and once per process, because each load takes seconds and hundreds of MB.
+Each is a process-wide singleton (`get_embedder()` / `get_reranker()`), loaded lazily on
+first use and pinned to the CPU. Loading twice would double RAM use on an 8 GB laptop.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ class Embedder:
         self.model = SentenceTransformer(model_name, device="cpu")
         self.query_prefix = BGE_QUERY_PREFIX if "bge" in model_name.lower() else ""
 
-    def embed_documents(self, texts: list[str], batch_size: int = 32) -> list[list[float]]:
+    def embed_documents(self, texts: list[str], batch_size: int = 16) -> list[list[float]]:
         vecs = self.model.encode(texts, batch_size=batch_size, normalize_embeddings=True,
                                  show_progress_bar=len(texts) > 64)
         return vecs.tolist()
@@ -50,7 +51,7 @@ class Reranker:
             return []
         import torch
 
-        logits = self.model.predict([(query, p) for p in passages], batch_size=16,
+        logits = self.model.predict([(query, p) for p in passages], batch_size=8,
                                     activation_fn=torch.nn.Identity(), convert_to_numpy=True)
         return [float(1 / (1 + pow(2.718281828, -x))) for x in logits]
 
