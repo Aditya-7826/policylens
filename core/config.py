@@ -18,8 +18,9 @@ class Settings(BaseSettings):
     groq_large_model: str = "openai/gpt-oss-120b"
     # Not qwen3.8-27b: its free tier also caps OUTPUT tokens at 1000/min (~1.5 extractions/min).
     groq_small_model: str = "openai/gpt-oss-20b"
-    groq_large_daily_tokens: int = 600_000  # safety caps; the binding free-tier limit is 1000 requests/day
-    groq_small_daily_tokens: int = 1_500_000
+    # Free tier: 200k tokens/day per model (rolling 24 h, seen in the 429 message), plus 1000 requests/day.
+    groq_large_daily_tokens: int = 190_000
+    groq_small_daily_tokens: int = 190_000
     groq_daily_requests: int = 950  # free tier: 1000 requests/day per model
     groq_tokens_per_minute: int = 7000  # free tier: 8000 tokens/min per model; we pace below it
     llm_reasoning_effort: str = "low"  # sent to reasoning models (gpt-oss); "" disables

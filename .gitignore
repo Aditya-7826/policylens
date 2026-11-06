@@ -18,3 +18,5 @@ data/neo4j/
 # UI artefacts
 lib/
 graph_*.html
+
+logs/
