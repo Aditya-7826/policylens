@@ -27,6 +27,7 @@ ANSWER_SYSTEM = """You answer compliance questions using ONLY the evidence block
 Rules:
 - Every sentence that states a fact must end with the evidence handle(s) it relies on, like
   "The controller must notify the supervisory authority within 72 hours [E2]." or "[E1][E4]".
+  Write handles exactly like [E2]: no paragraph numbers or other text inside the brackets.
 - Use only facts stated in the evidence. Do not use outside knowledge. Do not guess numbers or deadlines.
 - For comparisons, cover each document separately, then state the key differences (each cited).
 - If the evidence does not answer the question, reply with exactly: INSUFFICIENT_EVIDENCE
@@ -51,7 +52,20 @@ def answer_messages(question: str, sub_questions: list[str], chunks: list[Chunk]
 
 
 # ------------------------------------------------------------------------ sentence parsing
-_HANDLE = re.compile(r"\[(E\d+(?:\s*[,;]\s*E?\d+)*)\]")
+# Accepts what models actually write: [E3], [E1, E4], [E8(1)] (paragraph suffix), 【E2】 (CJK brackets).
+_HANDLE = re.compile(r"[\[【]\s*(E\d+(?:\([0-9a-z]+\))*(?:\s*[,;]\s*E?\d+(?:\([0-9a-z]+\))*)*)\s*[\]】]")
+_ZERO_WIDTH = re.compile(r"[​‌‍⁠﻿]")
+
+
+def normalize_answer(text: str) -> str:
+    """gpt-oss output contains zero-width spaces inside handles ("[\\u200bE3]") and narrow
+    no-break spaces before them; normalise so citations parse."""
+    return _ZERO_WIDTH.sub("", text).replace(" ", " ").replace(" ", " ")
+
+
+def _handle_numbers(group: str) -> list[int]:
+    """'E8(1), E3' -> [8, 3]  (the paragraph suffix is not an evidence number)."""
+    return [int(n) for n in re.findall(r"(?:^|[,;]\s*)E?(\d+)", group)]
 
 
 @dataclass
@@ -67,6 +81,8 @@ class Sentence:
 
 def split_sentences(answer: str) -> list[Sentence]:
     out: list[Sentence] = []
+    answer = normalize_answer(answer)
+    ends = re.compile(r"[.!?](?:\s*" + _HANDLE.pattern + r")*(?=\s+[A-Z(\"“*]|\s*$)")
     for li, raw in enumerate(answer.split("\n")):
         line = raw.strip()
         if not line:
@@ -76,7 +92,7 @@ def split_sentences(answer: str) -> list[Sentence]:
         body = line[len(prefix):]
         # split at sentence ends, keeping trailing handles with the sentence before them
         parts, start = [], 0
-        for mm in re.finditer(r"[.!?](?:\s*\[E[\d,;\sE]+\])*(?=\s+[A-Z(\"“]|\s*$)", body):
+        for mm in ends.finditer(body):
             parts.append(body[start:mm.end()].strip())
             start = mm.end()
         if body[start:].strip():
@@ -84,7 +100,7 @@ def split_sentences(answer: str) -> list[Sentence]:
         for pi, part in enumerate(parts):
             handles = []
             for grp in _HANDLE.findall(part):
-                handles += [int(x) for x in re.findall(r"\d+", grp)]
+                handles += _handle_numbers(grp)
             clean = re.sub(r"\s*" + _HANDLE.pattern, "", part).strip()
             if clean:
                 out.append(Sentence(clean, sorted(set(handles)), li, prefix if pi == 0 else ""))

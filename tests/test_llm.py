@@ -125,3 +125,21 @@ def test_extract_json_with_chatter():
     assert extract_json('Sure! {"a": 2, "b": "y"} hope that helps') == {"a": 2, "b": "y"}
     with pytest.raises(ValueError):
         extract_json("nothing here")
+
+
+def test_daily_request_cap_falls_back(tmp_path):
+    llm, groq, nv = make(tmp_path, ["a", "b"], ["from nvidia"])
+    llm.providers[0].daily_requests = 1
+    llm.chat([{"role": "user", "content": "one"}])
+    assert llm.chat([{"role": "user", "content": "two"}]).provider == "nvidia"
+    assert len(groq.calls) == 1
+
+
+def test_reasoning_effort_only_for_reasoning_models(tmp_path):
+    llm, groq, _ = make(tmp_path, ["a", "b"])
+    llm.providers[0].reasoning_effort = "low"
+    llm.providers[0].models = {"large": "openai/gpt-oss-120b", "small": "qwen/qwen3.8-27b"}
+    llm.chat(MSG, size="large")
+    llm.chat(MSG, size="small")
+    assert groq.calls[0]["extra_body"] == {"reasoning_effort": "low"}
+    assert "extra_body" not in groq.calls[1]

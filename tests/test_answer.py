@@ -76,3 +76,14 @@ def test_named_provisions():
     assert named_provisions("What does NIST SP 800-53 CP-9 require, and how is GV.SC related?") == ["CP-9", "GV.SC"]
     assert named_provisions("Compare Article 33 GDPR with section 8 of the DPDP Act") == ["Article 33", "Section 8"]
     assert named_provisions("What is a personal data breach?") == []
+
+
+def test_parses_real_gpt_oss_handle_formats():
+    # Copied from a real gpt-oss-120b draft: zero-width space inside the bracket, narrow
+    # no-break space before it, and a paragraph suffix "(1)" that is NOT evidence number 1.
+    ans = ("  * The Data Fiduciary must notify the Board under section 8 [​E3].  \n"
+           "  * GDPR sets a 72‑hour deadline [​E8(1)]; see also 【E2】 and [E4(3), E5].")
+    s = split_sentences(ans)
+    assert [x.handles for x in s] == [[3], [2, 4, 5, 8]]
+    assert s[0].text == "The Data Fiduciary must notify the Board under section 8."
+    assert s[0].prefix == "* "

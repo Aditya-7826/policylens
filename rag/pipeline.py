@@ -163,7 +163,7 @@ def build_graph(res: Resources | None = None):
         msgs = answer_messages(state["question"], [q.question for q in a.sub_questions], chunks)
         notes = list(state.get("notes", []))
         try:
-            draft = res.llm.chat(msgs, size="large", max_tokens=900).text.strip()
+            draft = res.llm.chat(msgs, size="large", max_tokens=1600).text.strip()  # includes hidden reasoning
         except LLMUnavailable as exc:
             draft = INSUFFICIENT
             notes.append(f"LLM unavailable: {exc}")

@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -85,6 +86,8 @@ def score_one(gold: dict, result: dict, llm, cfg_name: str) -> dict:
 
 
 def main():
+    # Batch job: sleep through per-minute rate limits (up to 2 min) instead of giving up.
+    os.environ.setdefault("LLM_MAX_WAIT_SECONDS", "120")
     ap = argparse.ArgumentParser(description="Run the PolicyLens gold-set evaluation")
     ap.add_argument("--configs", default="vector,hybrid,full")
     ap.add_argument("--ids", help="comma-separated gold ids (default: all)")

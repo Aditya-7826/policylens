@@ -14,10 +14,14 @@ class Settings(BaseSettings):
     # Groq (primary)
     groq_api_key: str = ""
     groq_base_url: str = "https://api.groq.com/openai/v1"
-    groq_large_model: str = "llama-3.3-70b-versatile"
-    groq_small_model: str = "llama-3.1-8b-instant"
+    # Verified against Groq's /models on 2026-11-06 (the Llama 3.x models were retired).
+    groq_large_model: str = "openai/gpt-oss-120b"
+    groq_small_model: str = "qwen/qwen3.8-27b"
     groq_large_daily_tokens: int = 90_000
     groq_small_daily_tokens: int = 450_000
+    groq_daily_requests: int = 950  # free tier: 1000 requests/day per model
+    llm_reasoning_effort: str = "low"  # sent to reasoning models (gpt-oss); "" disables
+    llm_max_wait_seconds: float = 30.0  # longest Retry-After we sleep through before falling back
 
     # NVIDIA NIM (fallback, limited credits)
     nvidia_api_key: str = ""
@@ -26,6 +30,7 @@ class Settings(BaseSettings):
     nvidia_small_model: str = "meta/llama-3.1-8b-instruct"
     nvidia_large_daily_tokens: int = 50_000
     nvidia_small_daily_tokens: int = 50_000
+    nvidia_daily_requests: int = 500
 
     # Local models
     embed_model: str = "BAAI/bge-small-en-v1.5"

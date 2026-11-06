@@ -83,6 +83,13 @@ class LLMStore:
             ).fetchone()
         return row[0] if row else 0
 
+    def calls_today(self, provider: str) -> int:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT calls FROM token_usage WHERE day=? AND provider=?", (utc_day(), provider)
+            ).fetchone()
+        return row[0] if row else 0
+
     def usage_report(self) -> dict:
         with self._lock:
             rows = self._db.execute(

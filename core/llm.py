@@ -32,6 +32,8 @@ Size = Literal["large", "small"]
 T = TypeVar("T", bound=BaseModel)
 
 # If a provider asks us to wait longer than this, fall back instead of blocking the user.
+# Default for interactive use; batch jobs (ingestion, evals) raise it via LLM_MAX_WAIT_SECONDS
+# so a per-minute rate limit makes them pause instead of giving up.
 MAX_WAIT_SECONDS = 30.0
 
 
@@ -56,6 +58,8 @@ class Provider:
     base_url: str
     models: dict[str, str]  # size -> model id
     budgets: dict[str, int]  # size -> daily token budget (free-tier caps are per model)
+    daily_requests: int = 10**9  # per-model request cap per day (Groq free tier: 1000)
+    reasoning_effort: str = ""  # sent only to reasoning models (gpt-oss); keeps hidden tokens low
     client: object | None = field(default=None, repr=False)  # injectable for tests
 
     @property
@@ -74,10 +78,12 @@ def providers_from_settings(s: Settings) -> list[Provider]:
     return [
         Provider("groq", s.groq_api_key, s.groq_base_url,
                  {"large": s.groq_large_model, "small": s.groq_small_model},
-                 {"large": s.groq_large_daily_tokens, "small": s.groq_small_daily_tokens}),
+                 {"large": s.groq_large_daily_tokens, "small": s.groq_small_daily_tokens},
+                 daily_requests=s.groq_daily_requests, reasoning_effort=s.llm_reasoning_effort),
         Provider("nvidia", s.nvidia_api_key, s.nvidia_base_url,
                  {"large": s.nvidia_large_model, "small": s.nvidia_small_model},
-                 {"large": s.nvidia_large_daily_tokens, "small": s.nvidia_small_daily_tokens}),
+                 {"large": s.nvidia_large_daily_tokens, "small": s.nvidia_small_daily_tokens},
+                 daily_requests=s.nvidia_daily_requests, reasoning_effort=s.llm_reasoning_effort),
     ]
 
 
@@ -105,6 +111,7 @@ class LLM:
         self.max_retries = max_retries
         self.base_delay = base_delay
         self._sleep = sleep
+        self.max_wait = s.llm_max_wait_seconds or MAX_WAIT_SECONDS
 
     # ------------------------------------------------------------------ public
     def chat(self, messages: list[dict], size: Size = "small", temperature: float = 0.0,
@@ -131,6 +138,9 @@ class LLM:
             used, budget = self.store.used_today(ledger), provider.budgets[size]
             if used + est > budget:
                 errors.append(f"{ledger}: daily token budget reached ({used}/{budget})")
+                continue
+            if self.store.calls_today(ledger) >= provider.daily_requests:
+                errors.append(f"{ledger}: daily request limit reached ({provider.daily_requests})")
                 continue
             try:
                 result = self._call_with_backoff(provider, size, messages, temperature, max_tokens)
@@ -169,10 +179,13 @@ class LLM:
     # ----------------------------------------------------------------- private
     def _call_with_backoff(self, provider: Provider, size: Size, messages, temperature, max_tokens):
         model = provider.models[size]
+        extra = {}
+        if provider.reasoning_effort and "gpt-oss" in model:  # only reasoning models accept this
+            extra["extra_body"] = {"reasoning_effort": provider.reasoning_effort}
         for attempt in range(self.max_retries + 1):
             try:
                 resp = provider.get_client().chat.completions.create(
-                    model=model, messages=messages, temperature=temperature, max_tokens=max_tokens,
+                    model=model, messages=messages, temperature=temperature, max_tokens=max_tokens, **extra,
                 )
                 usage = getattr(resp, "usage", None)
                 return LLMResult(
@@ -186,7 +199,7 @@ class LLM:
                 wait = _retry_after(exc)
                 if wait is None:
                     wait = self.base_delay * (2 ** attempt) + random.uniform(0, 0.5)
-                if wait > MAX_WAIT_SECONDS:
+                if wait > self.max_wait:
                     raise _ProviderFailed(f"rate limited, asked to wait {wait:.0f}s") from exc
                 if attempt == self.max_retries:
                     raise _ProviderFailed(f"{type(exc).__name__} after {attempt + 1} attempts") from exc

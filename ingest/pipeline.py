@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -132,6 +133,8 @@ def run_ingest(files: list[Path] | None = None, graph: bool = True, kg_docs: lis
 
 
 def main():
+    # Batch job: sleep through per-minute rate limits (up to 2 min) instead of giving up.
+    os.environ.setdefault("LLM_MAX_WAIT_SECONDS", "120")
     ap = argparse.ArgumentParser(description="Ingest documents from data/raw")
     ap.add_argument("--files", nargs="*", help="specific files (default: all in data/raw)")
     ap.add_argument("--no-graph", action="store_true", help="skip knowledge-graph extraction (no LLM calls)")
