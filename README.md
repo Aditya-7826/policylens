@@ -236,3 +236,7 @@ docs/      project brief and phase plan
 - The Gazette parser is tuned to Gazette of India layout, using margin columns and the Schedule table. Other PDFs use the generic parser.
 - The heading rules for 800-53 can match an example control quoted in the narrative. In that case the real control gets a suffixed ID (`au-4-2`), but its citation label stays `AU-4`.
 - Latency is CPU-bound (reranking and embeddings) and depends on the LLM cache. Cached questions are much faster than first runs.
+
+## License
+
+MIT. See [LICENSE](LICENSE). The corpus documents in `data/raw/` are not part of this repository; they are public texts downloaded from their official sources and remain under their own terms.
