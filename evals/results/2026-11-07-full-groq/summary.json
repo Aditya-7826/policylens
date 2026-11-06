@@ -1,0 +1,32 @@
+{
+  "full": {
+    "recall@5": 0.881,
+    "mrr": 0.861,
+    "key_facts": 0.904,
+    "citation_precision": 0.967,
+    "faithfulness": 0.954,
+    "n": 44,
+    "abstain_unanswerable": 1.0,
+    "answer_rate_answerable": 0.943,
+    "abstention_accuracy": 0.955,
+    "latency_p50": 59.52,
+    "latency_p95": 66.96,
+    "by_type": {
+      "simple": {
+        "recall@5": 1.0,
+        "mrr": 0.875,
+        "key_facts": 0.99
+      },
+      "multi_hop": {
+        "recall@5": 0.95,
+        "mrr": 0.95,
+        "key_facts": 0.8
+      },
+      "comparison": {
+        "recall@5": 0.593,
+        "mrr": 0.736,
+        "key_facts": 0.857
+      }
+    }
+  }
+}

@@ -121,15 +121,15 @@ curl -N -X POST localhost:8000/ask -H "content-type: application/json" \
 
 | Role | Model | Free-tier limits (measured) |
 |---|---|---|
-| Answers | `openai/gpt-oss-120b` | 1,000 requests/day, 8,000 tokens/min |
-| Extraction, analysis, judging | `openai/gpt-oss-20b` | 1,000 requests/day, 8,000 tokens/min |
-| Rejected for extraction | `qwen/qwen3.8-27b` | also capped at **1,000 output tokens/min**, so only about 1.5 extractions/min |
+| Answers | `openai/gpt-oss-120b` | 1,000 requests/day, 8,000 tokens/min, **200,000 tokens/day** |
+| Extraction, analysis, judging | `openai/gpt-oss-20b` | 1,000 requests/day, 8,000 tokens/min, **200,000 tokens/day** |
+| Judging during evals; rejected for extraction | `qwen/qwen3.8-27b` | separate daily quota, but capped at **1,000 output tokens/min**, so only about 1.5 extractions/min |
 
-The qwen limit isn't in Groq's rate-limit headers. It only shows up in the 429 error message, which is how it was found.
+Two of these limits aren't in Groq's rate-limit headers: the qwen output cap and the 200k tokens/day (a rolling 24 h window). Both only show up in the 429 error message, which is how they were found. The daily token budgets in `.env` are set just below 200k, so the client stops before Groq does.
 
 **Budget arithmetic.**
-- **Graph extraction:** about 890 small-model calls in total, about 1.6k tokens each. The 1,000 requests/day cap is what binds, so the full corpus takes 2 days, at about 4 extractions per minute.
-- **One full-pipeline answer:** about 3k large-model tokens and 3 small-model calls (analysis, judge, and faithfulness in evals).
+- **Graph extraction:** about 890 small-model calls in total, about 1.2k tokens each, about 1M tokens. At 200k tokens/day, the full corpus takes about 5 days of free tier. That's why extraction is resumable and can be limited to chosen documents.
+- **One full-pipeline answer (measured):** about 2.3k large-model tokens and about 3.2k small-model tokens over 3 calls (analysis, judge, and faithfulness in evals). So one model's daily quota covers about 60–80 eval questions.
 
 To focus extraction on the regulations first, run:
 
@@ -155,6 +155,7 @@ The defaults target a 7.3 GB Windows laptop:
 ```bash
 uv run python -m evals.run                    # 3 configs x 44 questions, resumable
 uv run python -m evals.run --out evals/results/<run>   # continue a run after a rate limit
+GROQ_SMALL_MODEL=qwen/qwen3.8-27b uv run python -m evals.run --configs full   # judge on a model with its own daily quota
 ```
 
 | Metric | How it's computed |
@@ -174,7 +175,29 @@ The three configurations compared:
 
 ### Results
 
-**Retrieval run without an LLM key** (2026-11-06, CPU laptop, MiniLM reranker). Full results are in [evals/results/2026-11-06-retrieval-no-llm-v2/](evals/results/2026-11-06-retrieval-no-llm-v2/report.md).
+**Live run of the full pipeline** (2026-11-07). Answers came from `gpt-oss-120b`, and analysis and judging from `qwen3.8-27b`, all on the Groq free tier. Full results are in [evals/results/2026-11-07-full-groq/](evals/results/2026-11-07-full-groq/report.md).
+
+| Metric | full |
+|---|---|
+| Recall@5 / MRR | 0.88 / 0.86 |
+| Recall@5: simple / multi-hop / comparison | 1.00 / 0.95 / 0.59 |
+| Key-fact accuracy | **0.90** |
+| Citation precision | **0.97** |
+| Faithfulness | **0.95** |
+| Abstains on unanswerable (9 questions) | **1.00** |
+| Answers answerable (35 questions) | 0.94 |
+| Latency p50 / p95 (s) | 59.5 / 67.0 |
+
+What these numbers mean:
+
+- **Unanswerable questions abstain cleanly.** All 9 scored a confidence of 0.34 or lower, and most stopped before calling the large model, in about 2–4 s.
+- **Comparisons are the weak spot.** Two of the 9 abstained (c04, c05) because one side's provision never reached the top 5. Comparison recall is 0.59, against 1.00 for simple questions.
+- **One miss is a real hallucination by omission.** For m04, about the GDPR fine for breach-notification failures, the retrieved chunk of Article 83 didn't contain paragraph 4 (€10 million / 2 %). The model then said "no fixed amount is specified". Every citation in that answer was correct, so citation-level verification can't catch a missing fact. Only key-fact scoring did.
+- **Latency is mostly rate-limit pacing, not compute.** The median stage times were 0.3 s for analysis, 3.3 s for retrieval and reranking, 49.7 s for generation and 4.2 s for verification. During a batch eval, the client paces large-model requests to stay under 8,000 tokens/min. A single interactive question without that pacing takes about 20–25 s.
+- **Two fixes to the scorer after this run.** The answers use non-breaking hyphens ("supply‑chain"), so the key-fact matcher now normalizes Unicode and hyphens. Separately, the s15 gold item now also accepts "dies" and "incapacitated", as well as "death" and "incapacity". Saved answers were re-scored with `python -m evals.report <run> --rescore-facts`, which makes no LLM calls; key-fact accuracy went from 0.81 to 0.90.
+- **Answer-level comparison with the `vector` and `hybrid` baselines isn't run yet.** It needs about 2 more days of free-tier tokens. `evals.run --configs vector,hybrid --out evals/results/2026-11-07-full-groq` resumes into the same folder.
+
+**Retrieval run without an LLM key** (2026-11-06, CPU laptop, MiniLM reranker). It compares all three configs on retrieval. Full results are in [evals/results/2026-11-06-retrieval-no-llm-v2/](evals/results/2026-11-06-retrieval-no-llm-v2/report.md).
 
 | Metric (answerable questions) | vector | hybrid | full |
 |---|---|---|---|
@@ -231,7 +254,8 @@ docs/      project brief and phase plan
 
 ## Limitations
 
-- **Graph extraction for the whole corpus takes 2 days of free-tier requests.** It is in progress: DPDP, GDPR and CSF first, then SP 800-53. Chunks not yet extracted still have their structure in the graph (sections, cross-references and provenance), and graph retrieval uses it.
+- **LLM graph extraction covers DPDP and GDPR so far.** That's 303 chunks. The graph now has 1,568 nodes, 661 `APPLIES_TO` edges and 14 cross-regulation `SIMILAR_TO` links. NIST CSF and SP 800-53 have their deterministic structure (sections, cross-references, provenance), and graph retrieval uses it, but their LLM extraction waits for more free-tier days (200k tokens/day).
+- **Citation verification checks support, not completeness.** A sentence can be faithfully cited and still leave out the key number, as in m04 above. It can also adopt the wording of one provision where another provision differs: in one test, the answer said a breach is reported to the Board "or" the Data Principal, following the Schedule, while Section 8(6) says "and".
 - The DPDP Act often says "in such form and manner as may be prescribed" (for example the breach-notification deadline). Those details are in the DPDP Rules, which are not in the corpus, so the system correctly says the Act sets no deadline.
 - The Gazette parser is tuned to Gazette of India layout, using margin columns and the Schedule table. Other PDFs use the generic parser.
 - The heading rules for 800-53 can match an example control quoted in the narrative. In that case the real control gets a suffixed ID (`au-4-2`), but its citation label stays `AU-4`.
