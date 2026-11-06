@@ -212,14 +212,14 @@ def _extract(llm, chunk: Chunk, progress, cooldown: float) -> Extraction:
     from core.llm import LLMUnavailable
 
     try:
-        return llm.chat_json(extraction_messages(chunk), Extraction, size="small", max_tokens=900)
+        return llm.chat_json(extraction_messages(chunk), Extraction, size="small", max_tokens=800)
     except LLMUnavailable as exc:
         msg = str(exc).lower()
         if "daily" in msg or "configured" in msg or cooldown <= 0:
             raise
         progress(f"[graph] rate limited; cooling down {cooldown:.0f}s, then retrying once")
         time.sleep(cooldown)
-        return llm.chat_json(extraction_messages(chunk), Extraction, size="small", max_tokens=900)
+        return llm.chat_json(extraction_messages(chunk), Extraction, size="small", max_tokens=800)
 
 
 def build_graph(store: ChunkStore, doc_ids: list[str] | None = None, limit: int | None = None,

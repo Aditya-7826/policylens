@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     groq_base_url: str = "https://api.groq.com/openai/v1"
     # Verified against Groq's /models on 2026-11-06 (the Llama 3.x models were retired).
     groq_large_model: str = "openai/gpt-oss-120b"
-    groq_small_model: str = "qwen/qwen3.8-27b"
+    # Not qwen3.8-27b: its free tier also caps OUTPUT tokens at 1000/min (~1.5 extractions/min).
+    groq_small_model: str = "openai/gpt-oss-20b"
     groq_large_daily_tokens: int = 600_000  # safety caps; the binding free-tier limit is 1000 requests/day
     groq_small_daily_tokens: int = 1_500_000
     groq_daily_requests: int = 950  # free tier: 1000 requests/day per model

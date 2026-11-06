@@ -93,7 +93,7 @@ def providers_from_settings(s: Settings) -> list[Provider]:
 
 def _estimate_tokens(messages: list[dict], max_tokens: int) -> int:
     chars = sum(len(m.get("content", "")) for m in messages)
-    return chars // 4 + max_tokens
+    return chars // 3 + max_tokens  # ~3 chars/token: conservative for legal text and these tokenizers
 
 
 def _retry_after(exc: Exception) -> float | None:
@@ -192,18 +192,19 @@ class LLM:
                 continue
             window = self._window(provider, ledger)
             if window is not None:
-                # expected size: prompt + a typical (not maximum) completion
-                if (pause := window.wait_time(_estimate_tokens(messages, min(max_tokens, 600)))) > 0:
+                # Groq counts a request against the per-minute limit as prompt + the full max_tokens
+                # allowance (reserved when the request is sent), not the tokens actually generated.
+                reserve = _estimate_tokens(messages, max_tokens)
+                if (pause := window.wait_time(reserve)) > 0:
                     log.info("pacing %s: waiting %.1fs for the per-minute token window", ledger, pause)
                     self._sleep(pause)
+                window.record(reserve)
             try:
                 result = self._call_with_backoff(provider, size, messages, temperature, max_tokens)
             except _ProviderFailed as exc:
                 errors.append(f"{provider.name}: {exc}")
                 log.warning("LLM provider %s failed: %s", provider.name, exc)
                 continue
-            if window is not None:
-                window.record(result.prompt_tokens + result.completion_tokens)
             self.store.add_usage(ledger, result.prompt_tokens + result.completion_tokens)
             self.store.put(key, result.provider, result.model, result.text,
                            result.prompt_tokens, result.completion_tokens)
