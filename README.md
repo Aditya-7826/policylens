@@ -108,14 +108,30 @@ curl -N -X POST localhost:8000/ask -H "content-type: application/json" \
 | Mechanism | Where |
 |---|---|
 | Every LLM call is cached in SQLite, keyed by a hash of the model, messages and parameters. Re-running ingestion or evals costs 0 tokens. | `core/store.py` |
-| Daily token ledger per `provider:model`. Groq's free caps are per model, so the 70B and 8B models have separate budgets in `.env`. | `core/llm.py` |
-| 429, 5xx and timeouts get exponential backoff with jitter. If `Retry-After` is over 30 s, the call falls back to the next provider instead of blocking. | `core/llm.py` |
+| Daily ledger per `provider:model` of both tokens and requests. Groq's free caps apply per model (1,000 requests/day each), so the large and small models are tracked separately. | `core/llm.py` |
+| Client-side pacing keeps each model under its per-minute token cap: a 60 s sliding window counts the prompt plus the full `max_tokens` allowance and waits *before* sending, instead of bouncing off 429s. | `core/llm.py` |
+| 429, 5xx and timeouts get exponential backoff with jitter. If `Retry-After` is over 30 s, interactive calls fall back to the next provider. Batch jobs (ingestion, evals) wait up to 2 minutes, and get one 65 s cool-down before giving up. | `core/llm.py`, `ingest/graph.py` |
+| `gpt-oss` models get `reasoning_effort=low`, so hidden reasoning tokens stay small. | `core/llm.py` |
 | The spaCy pre-filter skips chunks with no normative language (12.5% of the corpus), so they never reach the LLM. | `ingest/kg.py` |
 | Ingestion is incremental at two levels. Files with an unchanged SHA-256 and unchanged chunker code are skipped. Only chunks whose content hash changed are re-embedded or re-extracted. | `ingest/pipeline.py`, `ingest/store.py` |
 | Graph extraction is resumable. When the budget runs out, the remaining chunks get their deterministic structure now and LLM extraction on the next run. `--kg-limit N` caps calls per run. | `ingest/graph.py` |
 | Questions whose best reranked chunk scores under 0.08 abstain before calling the large model. | `rag/pipeline.py` |
 
-**Budget arithmetic.** Graph extraction takes 885 small-model calls at about 1.5k tokens each, roughly 1.3M tokens. That's about 3 days at Groq's 8B free cap, and it resumes automatically. One full-pipeline answer uses about 3k large-model tokens and about 4k small-model tokens. To focus extraction on the regulations first, run:
+**Models (checked against Groq's `/models` on 2026-11-06).** The Llama 3.x models in the original brief have been retired.
+
+| Role | Model | Free-tier limits (measured) |
+|---|---|---|
+| Answers | `openai/gpt-oss-120b` | 1,000 requests/day, 8,000 tokens/min |
+| Extraction, analysis, judging | `openai/gpt-oss-20b` | 1,000 requests/day, 8,000 tokens/min |
+| Rejected for extraction | `qwen/qwen3.8-27b` | also capped at **1,000 output tokens/min**, so only about 1.5 extractions/min |
+
+The qwen limit isn't in Groq's rate-limit headers. It only shows up in the 429 error message, which is how it was found.
+
+**Budget arithmetic.**
+- **Graph extraction:** about 890 small-model calls in total, about 1.6k tokens each. The 1,000 requests/day cap is what binds, so the full corpus takes 2 days, at about 4 extractions per minute.
+- **One full-pipeline answer:** about 3k large-model tokens and 3 small-model calls (analysis, judge, and faithfulness in evals).
+
+To focus extraction on the regulations first, run:
 
 ```bash
 uv run python -m ingest.pipeline --kg-docs dpdp_act_2023,gdpr,nist_csf_2.0
@@ -187,7 +203,7 @@ In this run:
 ## Tests
 
 ```bash
-uv run pytest            # 56 offline tests: fake LLM, fake models, no network, no Neo4j needed
+uv run pytest            # 61 offline tests: fake LLM, fake models, no network, no Neo4j needed
 ```
 
 The tests cover:
@@ -215,7 +231,7 @@ docs/      project brief and phase plan
 
 ## Limitations
 
-- **Graph extraction needs a Groq key and about 3 days of free-tier tokens for the whole corpus.** Until then the graph holds only structure: sections, cross-references and provenance. Graph retrieval still uses that structure.
+- **Graph extraction for the whole corpus takes 2 days of free-tier requests.** It is in progress: DPDP, GDPR and CSF first, then SP 800-53. Chunks not yet extracted still have their structure in the graph (sections, cross-references and provenance), and graph retrieval uses it.
 - The DPDP Act often says "in such form and manner as may be prescribed" (for example the breach-notification deadline). Those details are in the DPDP Rules, which are not in the corpus, so the system correctly says the Act sets no deadline.
 - The Gazette parser is tuned to Gazette of India layout, using margin columns and the Schedule table. Other PDFs use the generic parser.
 - The heading rules for 800-53 can match an example control quoted in the narrative. In that case the real control gets a suffixed ID (`au-4-2`), but its citation label stays `AU-4`.
