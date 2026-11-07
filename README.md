@@ -254,7 +254,7 @@ docs/      project brief and phase plan
 
 ## Limitations
 
-- **LLM graph extraction covers DPDP and GDPR so far.** That's 303 chunks. The graph now has 1,568 nodes, 661 `APPLIES_TO` edges and 14 cross-regulation `SIMILAR_TO` links. NIST CSF and SP 800-53 have their deterministic structure (sections, cross-references, provenance), and graph retrieval uses it, but their LLM extraction waits for more free-tier days (200k tokens/day).
+- **LLM graph extraction covers DPDP, GDPR and NIST CSF 2.0.** That's 338 chunks. The graph now has 1,688 nodes, 733 `APPLIES_TO` edges and 14 cross-regulation `SIMILAR_TO` links. SP 800-53 has its deterministic structure (sections, cross-references, provenance), and graph retrieval uses it, but its LLM extraction (about 540 chunks) waits for more free-tier days (200k tokens/day). The live eval above ran before CSF was extracted.
 - **Citation verification checks support, not completeness.** A sentence can be faithfully cited and still leave out the key number, as in m04 above. It can also adopt the wording of one provision where another provision differs: in one test, the answer said a breach is reported to the Board "or" the Data Principal, following the Schedule, while Section 8(6) says "and".
 - The DPDP Act often says "in such form and manner as may be prescribed" (for example the breach-notification deadline). Those details are in the DPDP Rules, which are not in the corpus, so the system correctly says the Act sets no deadline.
 - The Gazette parser is tuned to Gazette of India layout, using margin columns and the Schedule table. Other PDFs use the generic parser.
