@@ -106,3 +106,15 @@ def test_definition_units_get_small_windows():
     s3 = [c for c in chunks if c.section == "Section 3"]
     assert len(s2) > 3 and all(c.n_tokens <= 250 for c in s2)
     assert len(s3) == 1  # normal sections keep the normal window
+
+
+def test_kg_docs_keeps_dotted_ids(tmp_path):
+    import pytest
+
+    from ingest.pipeline import parse_kg_docs
+
+    for name in ("nist_csf_2.0.pdf", "gdpr.html"):
+        (tmp_path / name).write_bytes(b"x")
+    assert parse_kg_docs("nist_csf_2.0, gdpr.html", tmp_path) == ["nist_csf_2.0", "gdpr"]
+    with pytest.raises(SystemExit):
+        parse_kg_docs("nist_csf_2", tmp_path)

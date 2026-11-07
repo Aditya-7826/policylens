@@ -132,6 +132,17 @@ def run_ingest(files: list[Path] | None = None, graph: bool = True, kg_docs: lis
     return report
 
 
+def parse_kg_docs(arg: str, raw_dir: Path) -> list[str]:
+    """Doc ids from --kg-docs. Not Path(d).stem: that turns 'nist_csf_2.0' into 'nist_csf_2' (a '.0' "suffix")."""
+    known = {doc_id_for(f) for f in discover(raw_dir)}
+    ids = [d.strip().lower() for d in arg.split(",") if d.strip()]
+    ids = [d if d in known else doc_id_for(Path(d)) for d in ids]  # also accept file names like gdpr.html
+    unknown = sorted(set(ids) - known)
+    if unknown:
+        raise SystemExit(f"--kg-docs: unknown doc id(s) {unknown}; known: {sorted(known)}")
+    return ids
+
+
 def main():
     # Batch job: sleep through per-minute rate limits (up to 2 min) instead of giving up.
     os.environ.setdefault("LLM_MAX_WAIT_SECONDS", "120")
@@ -145,7 +156,7 @@ def main():
     for noisy in ("httpx", "httpx2", "huggingface_hub", "sentence_transformers", "chromadb"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
     files = [Path(f) for f in args.files] if args.files else None
-    kg_docs = [doc_id_for(Path(d)) for d in args.kg_docs.split(",")] if args.kg_docs else None
+    kg_docs = parse_kg_docs(args.kg_docs, get_settings().raw_dir) if args.kg_docs else None
     r = run_ingest(files, graph=not args.no_graph, kg_docs=kg_docs, kg_limit=args.kg_limit)
     print(f"\nDone in {r.seconds}s: +{r.added} ~{r.changed} -{r.removed} chunks, {r.embedded} embedded")
     if r.kg:
