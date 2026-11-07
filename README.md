@@ -226,7 +226,7 @@ In this run:
 ## Tests
 
 ```bash
-uv run pytest            # 61 offline tests: fake LLM, fake models, no network, no Neo4j needed
+uv run pytest            # 62 offline tests: fake LLM, fake models, no network, no Neo4j needed
 ```
 
 The tests cover:
