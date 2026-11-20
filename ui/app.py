@@ -13,11 +13,13 @@ import re
 
 import httpx
 import streamlit as st
+import theme
 from httpx_sse import connect_sse
 
 API = os.environ.get("API_URL", "http://localhost:8000")
 
 st.set_page_config(page_title="PolicyLens", page_icon="⚖️", layout="wide")
+st.html(theme.CSS)
 
 EXAMPLES = [
     "Under India's DPDP Act, what must a company do after a personal data breach, and how does that compare with GDPR?",
@@ -198,7 +200,7 @@ def render_result(r: dict):
 
 # ------------------------------------------------------------------------------- sidebar
 with st.sidebar:
-    st.title("⚖️ PolicyLens")
+    st.markdown("### Settings")
     st.caption("Hybrid GraphRAG over DPDP, GDPR, NIST CSF 2.0 and SP 800-53")
     config = st.radio("Pipeline", list(CONFIG_HELP), format_func=lambda k: k, help="\n\n".join(
         f"**{k}**: {v}" for k, v in CONFIG_HELP.items()))
@@ -267,15 +269,59 @@ with st.sidebar:
         st.rerun()
 
 # --------------------------------------------------------------------------------- chat
+PLACEHOLDER = "e.g. What must a Data Fiduciary do after a breach?"
+
+
+def upload_notice():
+    if pending_files:
+        st.warning(f"**{', '.join(pending_files)}** is uploaded but not indexed, so answers can't use it yet. "
+                   "Click **Ingest** under *Add documents* in the sidebar first.")
+    elif st.session_state.get("ingest_job"):
+        st.info("Indexing your upload. It becomes searchable when the sidebar says it's done.")
+
+
 st.session_state.setdefault("messages", [])
-if not st.session_state.messages:
-    st.markdown("#### Ask a compliance question")
+chatting = bool(st.session_state.messages) or "pending" in st.session_state
+st.html(theme.nav(chatting))
+
+if not chatting:
+    st.html(theme.hero())
+    stats = api_get("/stats")
+    st.html(theme.stats_strip(stats))
+
+    st.html(theme.section_head("pl-coverage", "Coverage", "What PolicyLens Knows"))
+    docs = stats.get("documents", {}) if "error" not in stats else {}
+    doc_ids = [d for d in theme.DOCS if d in docs] + [d for d in docs if d not in theme.DOCS]
+    for row in range(0, len(doc_ids), 4):
+        for col, doc_id in zip(st.columns(4), doc_ids[row:row + 4]):
+            with col, st.container(key=f"plcard-{re.sub(r'[^a-z0-9]', '-', doc_id.lower())}"):
+                html, starter = theme.doc_card(doc_id, docs[doc_id]["chunks"])
+                st.html(html)
+                if st.button("Ask about this", key=f"ask-{doc_id}", width="stretch"):
+                    st.session_state.pending = starter
+                    st.rerun()
+
+    st.html(theme.section_head("pl-method", "Method", "How an Answer Is Built"))
+    st.html(theme.steps())
+
+    st.html(theme.section_head("pl-ask", "Start here", "Common Questions"))
     cols = st.columns(2)
     for i, ex in enumerate(EXAMPLES):
-        if cols[i % 2].button(ex, key=f"ex{i}", width="stretch"):
-            st.session_state.pending = ex
+        with cols[i % 2], st.container(key=f"plq{i}"):
+            if st.button(ex, key=f"ex{i}", width="stretch"):
+                st.session_state.pending = ex
+                st.rerun()
+    upload_notice()
+    # Inline, not pinned: a page-level chat_input makes Streamlit auto-scroll to the bottom,
+    # which would skip the hero. Submitting switches to the chat view.
+    with st.container(key="plask"):
+        if typed := st.chat_input(PLACEHOLDER, key="landing_q"):
+            st.session_state.pending = typed
             st.rerun()
+    st.html(theme.FOOTER)
+    st.stop()
 
+st.html(theme.section_head("pl-ask", "Consultation", "Your Questions"))
 for m in st.session_state.messages:
     with st.chat_message(m["role"]):
         if m["role"] == "user":
@@ -283,13 +329,8 @@ for m in st.session_state.messages:
         else:
             render_result(m["content"])
 
-if pending_files:
-    st.warning(f"**{', '.join(pending_files)}** is uploaded but not indexed, so answers can't use it yet. "
-               "Click **Ingest** under *Add documents* in the sidebar first.")
-elif st.session_state.get("ingest_job"):
-    st.info("Indexing your upload. It becomes searchable when the sidebar says it's done.")
-
-question = st.chat_input("e.g. What must a Data Fiduciary do after a breach?") or st.session_state.pop("pending", None)
+upload_notice()
+question = st.chat_input(PLACEHOLDER) or st.session_state.pop("pending", None)
 if question:
     st.session_state.messages.append({"role": "user", "content": question})
     with st.chat_message("user"):
