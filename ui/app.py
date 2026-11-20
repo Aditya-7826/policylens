@@ -20,6 +20,7 @@ API = os.environ.get("API_URL", "http://localhost:8000")
 
 st.set_page_config(page_title="PolicyLens", page_icon="⚖️", layout="wide")
 st.html(theme.CSS)
+AVATAR = {"user": ":material/person:", "assistant": ":material/balance:"}
 
 EXAMPLES = [
     "Under India's DPDP Act, what must a company do after a personal data breach, and how does that compare with GDPR?",
@@ -115,14 +116,16 @@ def graph_html(sub: dict) -> str | None:
         return None
     from pyvis.network import Network
 
-    net = Network(height="420px", width="100%", directed=True, cdn_resources="remote", bgcolor="#ffffff")
+    net = Network(height="420px", width="100%", directed=True, cdn_resources="remote", bgcolor="#121110",
+                  font_color="#EDE8DF")
     for n in sub["nodes"]:
         net.add_node(n["key"], label=n["name"][:40], title=f"{n['label']}: {n['name']}",
                      color=LABEL_COLOR.get(n["label"], "#999"), shape="dot", size=14 if n["label"] != "Section" else 10)
     keys = {n["key"] for n in sub["nodes"]}
     for e in sub["edges"]:
         if e["source"] in keys and e["target"] in keys:
-            net.add_edge(e["source"], e["target"], label=e["rel"], font={"size": 9}, arrows="to")
+            net.add_edge(e["source"], e["target"], label=e["rel"], arrows="to", color="#5a5246",
+                         font={"size": 9, "color": "#A59F94", "strokeWidth": 0})
     net.repulsion(node_distance=140, spring_length=120)
     return net.generate_html()
 
@@ -323,7 +326,7 @@ if not chatting:
 
 st.html(theme.section_head("pl-ask", "Consultation", "Your Questions"))
 for m in st.session_state.messages:
-    with st.chat_message(m["role"]):
+    with st.chat_message(m["role"], avatar=AVATAR[m["role"]]):
         if m["role"] == "user":
             st.markdown(m["content"])
         else:
@@ -333,9 +336,9 @@ upload_notice()
 question = st.chat_input(PLACEHOLDER) or st.session_state.pop("pending", None)
 if question:
     st.session_state.messages.append({"role": "user", "content": question})
-    with st.chat_message("user"):
+    with st.chat_message("user", avatar=AVATAR["user"]):
         st.markdown(question)
-    with st.chat_message("assistant"):
+    with st.chat_message("assistant", avatar=AVATAR["assistant"]):
         with st.status("Thinking…", expanded=True) as status:
             try:
                 result = ask_stream(question, config, status)
