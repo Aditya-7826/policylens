@@ -218,23 +218,49 @@ with st.sidebar:
                     st.json(stats["graph"])
                 st.json(stats["llm"])
 
-    with st.expander("Add documents"):
+    st.session_state.setdefault("ingested", set())
+    with st.expander("Add documents", expanded=bool(st.session_state.get("ingest_job"))):
         files = st.file_uploader("PDF / HTML / TXT", type=["pdf", "html", "htm", "txt"], accept_multiple_files=True)
+        pending_files = [f.name for f in files or [] if f.name not in st.session_state.ingested]
+        if pending_files:
+            st.warning("Not searchable yet. Click **Ingest** to index: " + ", ".join(pending_files))
         with_graph = st.checkbox("Extract knowledge graph (uses LLM tokens)", value=True)
-        if st.button("Ingest", disabled=not files):
+        if st.button("Ingest", disabled=not pending_files, type="primary"):
             r = httpx.post(f"{API}/ingest", files=[("files", (f.name, f.getvalue())) for f in files],
                            data={"graph": str(with_graph).lower()}, timeout=120)
             if r.status_code == 200:
                 st.session_state.ingest_job = r.json()["job_id"]
+                st.session_state.ingest_files = r.json()["saved"]
+                st.rerun()
             else:
                 st.error(r.text)
-        if job := st.session_state.get("ingest_job"):
-            j = api_get("/ingest/status", {"job_id": job})
-            st.caption(f"job {job}: {j.get('status')}")
-            st.code("\n".join(j.get("log", [])[-8:]) or "...")
-            if st.button("Refresh status"):
+
+        @st.fragment(run_every=3)
+        def ingest_progress():
+            job = st.session_state.get("ingest_job")
+            if not job:
+                return
+            try:
+                j = httpx.get(f"{API}/ingest/status", params={"job_id": job}, timeout=10).json()
+            except httpx.HTTPError as exc:
+                st.error(f"Could not read ingest status: {exc}")
+                return
+            status = j.get("status")
+            if status == "running":
+                st.info(f"Indexing {', '.join(st.session_state.get('ingest_files', []))}…")
+            elif status == "done":
+                st.session_state.ingested.update(st.session_state.get("ingest_files", []))
+                st.session_state.pop("ingest_job")
                 api_get.clear()
-                st.rerun()
+                st.rerun()  # full rerun: refresh the chunk count and clear the warnings
+            else:
+                st.error(f"Ingestion failed: {j.get('error', status)}")
+            st.code("\n".join(j.get("log", [])[-8:]) or "...")
+
+        ingest_progress()
+        done = st.session_state.get("ingest_files")
+        if done and not st.session_state.get("ingest_job"):
+            st.success(f"Indexed {', '.join(done)}. Ask about it in the chat.")
 
     if st.button("Clear chat"):
         st.session_state.messages = []
@@ -256,6 +282,12 @@ for m in st.session_state.messages:
             st.markdown(m["content"])
         else:
             render_result(m["content"])
+
+if pending_files:
+    st.warning(f"**{', '.join(pending_files)}** is uploaded but not indexed, so answers can't use it yet. "
+               "Click **Ingest** under *Add documents* in the sidebar first.")
+elif st.session_state.get("ingest_job"):
+    st.info("Indexing your upload. It becomes searchable when the sidebar says it's done.")
 
 question = st.chat_input("e.g. What must a Data Fiduciary do after a breach?") or st.session_state.pop("pending", None)
 if question:
