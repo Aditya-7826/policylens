@@ -20,3 +20,6 @@ lib/
 graph_*.html
 
 logs/
+
+# Playwright MCP browser-test screenshots and snapshots
+.playwright-mcp/
