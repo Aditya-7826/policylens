@@ -1,0 +1,21 @@
+# Dark "law office" theme: near-black surfaces, warm ivory text, one gold accent.
+[theme]
+base = "dark"
+primaryColor = "#D9AE5F"
+backgroundColor = "#0A0A0A"
+secondaryBackgroundColor = "#141311"
+textColor = "#EDE8DF"
+borderColor = "#2A2722"
+linkColor = "#D9AE5F"
+baseRadius = "2px"
+buttonRadius = "0px"
+font = "Raleway:https://fonts.googleapis.com/css2?family=Raleway:wght@400;500;600;700&display=swap, sans-serif"
+headingFont = "'Playfair Display':https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&display=swap, serif"
+headingFontWeights = [700, 700, 600, 600, 600, 600]
+
+[theme.sidebar]
+backgroundColor = "#0F0E0C"
+secondaryBackgroundColor = "#181613"
+
+[browser]
+gatherUsageStats = false
